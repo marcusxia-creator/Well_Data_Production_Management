@@ -1,0 +1,55 @@
+name: saguaro_petroleum_well_production_management
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-saguaro_well_production_db}
+      POSTGRES_USER: ${POSTGRES_USER:-saguaro_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-saguaro_dev_password}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - saguaro_postgres_data:/var/lib/postgresql/data
+      - ./deployment/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-saguaro_app} -d ${POSTGRES_DB:-saguaro_well_production_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: .
+      dockerfile: deployment/backend.Dockerfile
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-saguaro-development-key}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5174}
+      POSTGRES_DB: ${POSTGRES_DB:-saguaro_well_production_db}
+      POSTGRES_USER: ${POSTGRES_USER:-saguaro_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-saguaro_dev_password}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+    ports:
+      - "${BACKEND_HOST_PORT:-8001}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deployment/frontend.Dockerfile
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8001/api}
+      VITE_GOOGLE_MAPS_API_KEY: ${VITE_GOOGLE_MAPS_API_KEY:-}
+    ports:
+      - "${FRONTEND_HOST_PORT:-5174}:5173"
+    depends_on:
+      - backend
+
+volumes:
+  saguaro_postgres_data:
