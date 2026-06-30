@@ -34,7 +34,7 @@ const MARKER_LABELS = {
   "marker-plugged-oil": "Plugged oil well",
   "marker-dry-hole": "Dry hole",
   "marker-abandoned": "Abandoned well",
-  "marker-sp-operator": "Saguaro wells",
+  "marker-sp-operator": "SP wells",
   "marker-default": "Other well",
 };
 
@@ -72,8 +72,7 @@ function isSpOperator(well) {
   return (
     operatorName === "SP" ||
     operatorName === "S.P." ||
-    operatorName.includes("SAGUARO") ||
-    operatorName.includes("SAGUARO PETROLEUM")
+    operatorName.includes("SP PETROLEUM")
   );
 }
 

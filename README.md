@@ -16,9 +16,9 @@ This project is a clean copy of the wellbore platform. It uses its own Docker Co
 Database defaults:
 
 ```text
-Database: saguaro_well_production_db
-User:     saguaro_app
-Password: saguaro_dev_password
+Database: sp_well_production_db
+User:     sp_app
+Password: sp_dev_password
 Host inside Docker: db
 Host from Windows:  localhost
 Port inside Docker: 5432
@@ -32,7 +32,7 @@ These credentials are for local development only. Change them in `.env` before u
 Open PowerShell:
 
 ```powershell
-cd C:\Users\gxia\Python\Saguaro_Petroleum_Well_Production_Management
+cd C:\Users\gxia\Python\SP_Petroleum_Well_Production_Management
 docker compose up -d --build
 ```
 
@@ -44,13 +44,13 @@ docker compose logs -f
 
 The first startup automatically:
 
-1. Creates the `saguaro_well_production_db` PostgreSQL database.
+1. Creates the `sp_well_production_db` PostgreSQL database.
 2. Enables PostGIS.
 3. Creates empty source tables such as `well_header` and `well_production_summary`.
 4. Runs Django migrations for authentication, admin, and cache tables.
 5. Starts the API and dashboard.
 
-The dashboard initially shows zero wells because the Saguaro dataset has not yet been imported.
+The dashboard initially shows zero wells because the SP dataset has not yet been imported.
 
 
 ## Platform Modules
@@ -133,18 +133,18 @@ The dashboard uses `base_uwi` to connect records between source tables. For dupl
 
 ## Importing A PostgreSQL Dump
 
-Copy a dump into this project, for example `database_dumps\saguaro.dump`. The `database_dumps` directory and `*.dump` files are ignored by Git.
+Copy a dump into this project, for example `database_dumps\sp.dump`. The `database_dumps` directory and `*.dump` files are ignored by Git.
 
 Restore a custom-format dump:
 
 ```powershell
-docker compose exec -T db pg_restore --username=saguaro_app --dbname=saguaro_well_production_db --clean --if-exists --no-owner < database_dumps\saguaro.dump
+docker compose exec -T db pg_restore --username=sp_app --dbname=sp_well_production_db --clean --if-exists --no-owner < database_dumps\sp.dump
 ```
 
 Restore a plain SQL file:
 
 ```powershell
-docker compose exec -T db psql --username=saguaro_app --dbname=saguaro_well_production_db < database_dumps\saguaro.sql
+docker compose exec -T db psql --username=sp_app --dbname=sp_well_production_db < database_dumps\sp.sql
 ```
 
 If the incoming dataset uses different table or column names, update the import process or Django models before refreshing caches.
@@ -155,7 +155,7 @@ A CSV can be copied into the database container and imported with PostgreSQL `\c
 
 ```powershell
 docker compose cp C:\path\to\well_header.csv db:/tmp/well_header.csv
-docker compose exec db psql -U saguaro_app -d saguaro_well_production_db -c "\copy well_header FROM '/tmp/well_header.csv' WITH (FORMAT csv, HEADER true)"
+docker compose exec db psql -U sp_app -d sp_well_production_db -c "\copy well_header FROM '/tmp/well_header.csv' WITH (FORMAT csv, HEADER true)"
 ```
 
 Repeat for each source table. CSV headings must match the database columns.
@@ -191,7 +191,7 @@ docker compose ps
 Open PostgreSQL:
 
 ```powershell
-docker compose exec db psql -U saguaro_app -d saguaro_well_production_db
+docker compose exec db psql -U sp_app -d sp_well_production_db
 ```
 
 Run Django checks:
@@ -218,7 +218,7 @@ Stop and permanently delete only this project's Docker database volume:
 docker compose down -v
 ```
 
-The `-v` command deletes imported Saguaro database data. Use it only when intentionally resetting the new database.
+The `-v` command deletes imported SP database data. Use it only when intentionally resetting the new database.
 
 ## API Filters
 

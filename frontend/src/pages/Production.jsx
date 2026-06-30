@@ -182,7 +182,7 @@ export default function Production() {
     <main className="app-shell">
       <aside className="sidebar">
         <div>
-          <p className="eyebrow">Saguaro Petroleum</p>
+          <p className="eyebrow">SP Petroleum</p>
           <h1>Well Production</h1>
         </div>
 

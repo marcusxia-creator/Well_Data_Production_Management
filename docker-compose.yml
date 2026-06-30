@@ -1,19 +1,19 @@
-name: saguaro_petroleum_well_production_management
+name: sp_petroleum_well_production_management
 
 services:
   db:
     image: postgis/postgis:16-3.4
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-saguaro_well_production_db}
-      POSTGRES_USER: ${POSTGRES_USER:-saguaro_app}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-saguaro_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-sp_well_production_db}
+      POSTGRES_USER: ${POSTGRES_USER:-sp_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sp_dev_password}
     ports:
       - "${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
-      - saguaro_postgres_data:/var/lib/postgresql/data
+      - sp_postgres_data:/var/lib/postgresql/data
       - ./deployment/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-saguaro_app} -d ${POSTGRES_DB:-saguaro_well_production_db}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sp_app} -d ${POSTGRES_DB:-sp_well_production_db}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -23,13 +23,13 @@ services:
       context: .
       dockerfile: deployment/backend.Dockerfile
     environment:
-      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-saguaro-development-key}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-sp-development-key}
       DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5174}
-      POSTGRES_DB: ${POSTGRES_DB:-saguaro_well_production_db}
-      POSTGRES_USER: ${POSTGRES_USER:-saguaro_app}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-saguaro_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-sp_well_production_db}
+      POSTGRES_USER: ${POSTGRES_USER:-sp_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sp_dev_password}
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
     ports:
@@ -52,4 +52,4 @@ services:
       - backend
 
 volumes:
-  saguaro_postgres_data:
+  sp_postgres_data:

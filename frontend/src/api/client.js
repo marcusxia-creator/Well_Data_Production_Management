@@ -1,6 +1,6 @@
 const API_BASE_URL = window.location.protocol + "//" + window.location.hostname + ":" + (import.meta.env.VITE_API_PORT || "8001") + "/api";
 
-const AUTH_TOKEN_KEY = "saguaro_auth_token";
+const AUTH_TOKEN_KEY = "sp_auth_token";
 localStorage.removeItem(AUTH_TOKEN_KEY);
 let authToken = sessionStorage.getItem(AUTH_TOKEN_KEY);
 

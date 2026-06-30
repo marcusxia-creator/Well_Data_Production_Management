@@ -74,7 +74,7 @@ export default function App() {
         <div className="platform-brand">
           <span className="brand-mark">SP</span>
           <div>
-            <strong>Saguaro Petroleum</strong>
+            <strong>SP Petroleum</strong>
             <small>Well Production Management</small>
           </div>
         </div>
