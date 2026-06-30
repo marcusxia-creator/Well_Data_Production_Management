@@ -1,4 +1,4 @@
-# Saguaro Petroleum Well Production Management
+#Well Production Management
 
 Independent Django, React, PostgreSQL, and PostGIS application for loading and exploring a separate well-production dataset.
 
@@ -73,7 +73,8 @@ Header cleaning removes surrounding spaces and punctuation, converts words to lo
 Every new upload also generates three lineage columns before preview and mapping:
 
 - import_timestamp: one timestamp identifying when the batch was uploaded
-- aw_id: a generated unique bigint for each raw row
+- 
+aw_id: a generated unique bigint for each raw row
 - source_file: the uploaded Excel filename
 
 These fields are automatically suggested for the common mapping rules and are created in the physical raw table as 	imestamptz, igint, and 	ext.
