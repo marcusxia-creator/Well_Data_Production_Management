@@ -16,7 +16,7 @@ import MultiSelectDropdown, { selectedLabel } from "../components/MultiSelectDro
 function formatDepth(value) {
   if (value == null || value === "") return "-";
   const depth = Number(value);
-  return Number.isFinite(depth) ? depth.toLocaleString() + " m" : "-";
+  return Number.isFinite(depth) ? depth.toLocaleString() + " ft" : "-";
 }
 
 function formatProduction(well) {
@@ -32,7 +32,7 @@ function formatProduction(well) {
   const values = [];
 
   if (sample.oil_m3 != null) {
-    values.push("Oil " + Number(sample.oil_m3).toLocaleString() + " m3");
+    values.push("Oil " + Number(sample.oil_m3).toLocaleString() + " bbls");
   }
 
   if (sample.gas_e3m3 != null) {
@@ -40,7 +40,7 @@ function formatProduction(well) {
   }
 
   if (sample.water_m3 != null) {
-    values.push("Water " + Number(sample.water_m3).toLocaleString() + " m3");
+    values.push("Water " + Number(sample.water_m3).toLocaleString() + " bbls");
   }
 
   return values.join(" | ");
@@ -279,7 +279,7 @@ export default function WellDashboard() {
         {error && <div className="notice">{error}</div>}
 
         <div className="map-panel">
-          <WellMap wells={wells} loading={loading} />
+          <WellMap wells={wells} loading={loading} showProductionBubbles={false} />
         </div>
 
         <section className="table-section">
@@ -329,3 +329,4 @@ export default function WellDashboard() {
     </main>
   );
 }
+

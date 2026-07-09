@@ -1,13 +1,186 @@
 import { ArrowLeft, ArrowRight, Check, Database, FileSpreadsheet, Save, Search, Upload } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { applyMappingTemplate, createRawImportTable, executeImportSplit, fetchMappedPreview, fetchMappingTemplates, saveImportMappings, saveMappingTemplate, uploadRawWorkbook } from "../api/client.js";
+import { applyMappingTemplate, createRawImportTable, executeImportSplit, fetchMappedPreview, fetchMappingTemplates, inspectProductionData, previewProductionData, saveImportMappings, saveMappingTemplate, uploadProductionData, uploadRawWorkbook } from "../api/client.js";
 
 function targetColumnLabel(mapping) {
   return mapping.target_column === "md_all_wells_m" ? "measured_depth_m" : mapping.target_column;
 }
 
+
+function productionFieldLabel(field) {
+  return ({
+    base_uwi: "base_uwi",
+    production_date: "date",
+    daily_oil: "oil",
+    daily_water: "water",
+    daily_gas: "gas",
+    fluid: "fluid",
+  })[field.target] || field.label || field.target;
+}
+
+function ProductionPreviewTable({ rows = [] }) {
+  return (
+    <div className="mapped-preview-wrap production-preview-wrap">
+      <table>
+        <thead><tr><th>base_uwi</th><th>date</th><th>oil</th><th>water</th><th>gas</th><th>fluid</th></tr></thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={`${row.base_uwi}-${row.production_date}-${index}`}><td>{row.base_uwi}</td><td>{row.production_date}</td><td>{row.daily_oil}</td><td>{row.daily_water}</td><td>{row.daily_gas}</td><td>{row.fluid}</td></tr>
+          ))}
+          {rows.length === 0 && <tr><td colSpan={6} className="empty">No mapped production rows to preview.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ProductionImportTab({
+  productionFile,
+  setProductionFile,
+  productionStep,
+  setProductionStep,
+  productionInspect,
+  setProductionInspect,
+  productionMappings,
+  setProductionMappings,
+  productionPreview,
+  setProductionPreview,
+  productionSummary,
+  setProductionSummary,
+  productionReplaceExisting,
+  setProductionReplaceExisting,
+  productionBusy,
+  handleProductionInspect,
+  handleProductionPreview,
+  handleProductionComplete,
+}) {
+  const requiredFields = (productionInspect?.fields || []).filter((field) => field.required);
+  const unresolvedRequired = requiredFields.filter((field) => !productionMappings[field.target]).length;
+
+  return (
+    <>
+      <ol className="stepper production-stepper">
+        <li className={productionStep >= 1 ? "active" : ""}><span>1</span><div><strong>Daily File Import</strong><small>Read source headers</small></div></li>
+        <li className={productionStep >= 2 ? "active" : ""}><span>2</span><div><strong>Column Mapping</strong><small>Map database fields</small></div></li>
+        <li className={productionStep >= 3 ? "active" : ""}><span>3</span><div><strong>Mapped Data Review</strong><small>Review production rows</small></div></li>
+        <li className={productionStep >= 4 ? "active" : ""}><span>4</span><div><strong>Complete</strong><small>Generate monthly data</small></div></li>
+      </ol>
+
+      {productionStep === 1 && (
+        <section className="sequential-page">
+          <section className="import-workspace upload-workspace">
+            <div className="upload-panel">
+              <FileSpreadsheet size={34} />
+              <h2>Step 1: Import daily production file</h2>
+              <p>CSV or Excel headings are inspected first so daily production database fields can be mapped before import.</p>
+              <form onSubmit={handleProductionInspect}>
+                <label className="file-picker">
+                  <Upload size={18} />
+                  <span>{productionFile ? productionFile.name : "Select .csv, .xlsx, or .xlsm production file"}</span>
+                  <input type="file" accept=".csv,.xlsx,.xlsm" onChange={(event) => { setProductionFile(event.target.files?.[0] || null); setProductionInspect(null); setProductionPreview(null); setProductionSummary(null); }} />
+                </label>
+                <button className="primary-command" disabled={!productionFile || productionBusy}>{productionBusy ? "Inspecting file..." : "Inspect File"}<Upload size={17} /></button>
+              </form>
+            </div>
+            <aside className="import-notes">
+              <Database size={22} />
+              <h3>Production storage</h3>
+              <p>Daily rows are written to <code>production_daily</code>. Monthly totals and cumulative production are generated in <code>production_monthly</code>.</p>
+            </aside>
+          </section>
+          {productionInspect && (
+            <div className="step-one-results">
+              <div className="batch-summary">
+                <div><span>File</span><strong>{productionInspect.file_name}</strong></div>
+                <div><span>Worksheet</span><strong>{productionInspect.sheet_name}</strong></div>
+                <div><span>Rows</span><strong>{productionInspect.row_count.toLocaleString()}</strong></div>
+                <div><span>Source columns</span><strong>{productionInspect.headers.length}</strong></div>
+              </div>
+              <section className="cleaned-header-section">
+                <div className="section-heading"><div><h2>Source column names</h2><p>These names will be available for production field mapping.</p></div></div>
+                <div className="header-chip-list">{productionInspect.headers.map((header, index) => <span key={`${header}-${index}`}><small>{index + 1}</small>{header || `column_${index + 1}`}</span>)}</div>
+              </section>
+            </div>
+          )}
+          <footer className="sequential-page-actions">
+            <span>{productionInspect ? "File inspected. Continue to map production database fields." : "Inspect a production file to enable mapping."}</span>
+            <button className="primary-command" disabled={!productionInspect || productionBusy} onClick={() => setProductionStep(2)}>Next: Column Mapping <ArrowRight size={17} /></button>
+          </footer>
+        </section>
+      )}
+
+      {productionStep === 2 && productionInspect && (
+        <section className="sequential-page mapping-workspace">
+          <div className="batch-summary">
+            <div><span>File</span><strong>{productionInspect.file_name}</strong></div>
+            <div><span>Target daily table</span><strong>production_daily</strong></div>
+            <div><span>Required mapped</span><strong>{requiredFields.length - unresolvedRequired} / {requiredFields.length}</strong></div>
+            <div><span>Monthly output</span><strong>production_monthly</strong></div>
+          </div>
+          <section className="mapping-section">
+            <div className="mapping-toolbar">
+              <div><h2>Step 2: Production column mapping</h2><p>Map source columns to daily production database fields.</p></div>
+              <div className="mapping-metrics"><span className={unresolvedRequired ? "warning-count" : "ok-count"}>{unresolvedRequired} required unresolved</span></div>
+            </div>
+            <div className="mapping-table-wrap">
+              <table className="mapping-table production-mapping-table">
+                <thead><tr><th>Target table</th><th>Database field</th><th>Source column</th><th>Type</th><th>Rule</th></tr></thead>
+                <tbody>{productionInspect.fields.map((field) => (
+                  <tr key={field.target} className={field.required && !productionMappings[field.target] ? "mapping-required" : ""}>
+                    <td><strong>production_daily</strong></td>
+                    <td>{productionFieldLabel(field)}{field.target !== productionFieldLabel(field) && <small>Stored as {field.target}</small>}{field.required && <span className="required-mark">Required</span>}</td>
+                    <td><select value={productionMappings[field.target] || ""} onChange={(event) => setProductionMappings((current) => ({ ...current, [field.target]: event.target.value }))}><option value="">Not mapped</option>{productionInspect.headers.map((header, index) => <option key={`${header}-${index}`} value={header}>{header || `column_${index + 1}`}</option>)}</select></td>
+                    <td>{field.type}</td><td>{field.rule}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </section>
+          <footer className="sequential-page-actions">
+            <button className="secondary-command" disabled={productionBusy} onClick={() => setProductionStep(1)}><ArrowLeft size={17} /> Back to File Import</button>
+            <button className="primary-command" disabled={productionBusy || unresolvedRequired > 0} onClick={handleProductionPreview}>{productionBusy ? "Generating preview..." : "Next: Review Mapped Data"}<ArrowRight size={17} /></button>
+          </footer>
+        </section>
+      )}
+
+      {productionStep === 3 && productionPreview && (
+        <section className="sequential-page mapped-review-workspace">
+          <section className="mapped-review-section">
+            <div className="mapping-toolbar"><div><h2>Step 3: Review mapped production data</h2><p>Review transformed daily rows before writing production tables.</p></div></div>
+            <div className="mapped-header-list production-mapping-list">{Object.entries(productionPreview.mapped_columns).map(([target, source]) => <span key={target}><small>{target}</small>{source}</span>)}</div>
+            <ProductionPreviewTable rows={productionPreview.preview} />
+          </section>
+          <footer className="sequential-page-actions mapping-complete-actions">
+            <button className="secondary-command" disabled={productionBusy} onClick={() => setProductionStep(2)}><ArrowLeft size={17} /> Back to Column Mapping</button>
+            <label><input type="checkbox" checked={productionReplaceExisting} onChange={(event) => setProductionReplaceExisting(event.target.checked)} /> Replace existing production data</label>
+            <button className="primary-command" disabled={productionBusy} onClick={handleProductionComplete}>{productionBusy ? "Completing import..." : "Complete Process"}<Check size={17} /></button>
+          </footer>
+        </section>
+      )}
+
+      {productionStep === 4 && productionSummary && (
+        <section className="sequential-page completion-workspace import-complete-page">
+          <div className="completion-icon"><Check size={28} /></div>
+          <h2>Production import is complete</h2>
+          <p>Daily production rows were imported and monthly cumulative production was generated.</p>
+          <div className="result-grid">
+            <div><span>Daily table</span><strong>{productionSummary.daily_table_name}</strong></div>
+            <div><span>Daily rows</span><strong>{productionSummary.daily_row_count.toLocaleString()}</strong></div>
+            <div><span>Monthly table</span><strong>{productionSummary.monthly_table_name}</strong></div>
+            <div><span>Monthly rows</span><strong>{productionSummary.monthly_row_count.toLocaleString()}</strong></div>
+            <div><span>Wells</span><strong>{productionSummary.well_count.toLocaleString()}</strong></div>
+            <div><span>Skipped rows</span><strong>{productionSummary.skipped_row_count.toLocaleString()}</strong></div>
+          </div>
+          <ProductionPreviewTable rows={productionSummary.preview} />
+        </section>
+      )}
+    </>
+  );
+}
+
 export default function RawDataImport({ onDone }) {
+  const [activeImportTab, setActiveImportTab] = useState("raw");
   const [file, setFile] = useState(null);
   const [batch, setBatch] = useState(null);
   const [step, setStep] = useState(1);
@@ -27,6 +200,14 @@ export default function RawDataImport({ onDone }) {
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [templateBusy, setTemplateBusy] = useState(false);
   const [templateMessage, setTemplateMessage] = useState("");
+  const [productionFile, setProductionFile] = useState(null);
+  const [productionReplaceExisting, setProductionReplaceExisting] = useState(true);
+  const [productionStep, setProductionStep] = useState(1);
+  const [productionInspect, setProductionInspect] = useState(null);
+  const [productionMappings, setProductionMappings] = useState({});
+  const [productionPreview, setProductionPreview] = useState(null);
+  const [productionSummary, setProductionSummary] = useState(null);
+  const [productionBusy, setProductionBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -91,6 +272,56 @@ export default function RawDataImport({ onDone }) {
       setError(uploadError.message);
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function handleProductionInspect(event) {
+    event.preventDefault();
+    if (!productionFile) return;
+    setProductionBusy(true);
+    setError("");
+    setProductionInspect(null);
+    setProductionPreview(null);
+    setProductionSummary(null);
+    try {
+      const inspected = await inspectProductionData(productionFile);
+      setProductionInspect(inspected);
+      setProductionMappings(inspected.suggested_mappings || {});
+    } catch (uploadError) {
+      setError(uploadError.message);
+    } finally {
+      setProductionBusy(false);
+    }
+  }
+
+  async function handleProductionPreview() {
+    if (!productionFile) return;
+    setProductionBusy(true);
+    setError("");
+    setProductionSummary(null);
+    try {
+      const preview = await previewProductionData(productionFile, productionMappings);
+      setProductionPreview(preview);
+      setProductionStep(3);
+    } catch (previewError) {
+      setError(previewError.message);
+    } finally {
+      setProductionBusy(false);
+    }
+  }
+
+  async function handleProductionComplete() {
+    if (!productionFile) return;
+    setProductionBusy(true);
+    setError("");
+    try {
+      const imported = await uploadProductionData(productionFile, productionReplaceExisting, productionMappings);
+      setProductionSummary(imported);
+      setProductionStep(4);
+    } catch (uploadError) {
+      setError(uploadError.message);
+    } finally {
+      setProductionBusy(false);
     }
   }
 
@@ -209,7 +440,18 @@ export default function RawDataImport({ onDone }) {
         <button className="secondary-command" onClick={onDone}><ArrowLeft size={17} /> Production Dashboard</button>
       </header>
 
-      {importMetrics && (
+      <nav className="import-subtabs" aria-label="Data import sections">
+        <button className={activeImportTab === "raw" ? "selected" : ""} type="button" onClick={() => { setActiveImportTab("raw"); setError(""); }}>
+          <FileSpreadsheet size={17} />
+          <span><strong>Raw Data Import & Mapping</strong><small>Upload, map, and split source tables</small></span>
+        </button>
+        <button className={activeImportTab === "production" ? "selected" : ""} type="button" onClick={() => { setActiveImportTab("production"); setError(""); }}>
+          <Database size={17} />
+          <span><strong>Daily Production File Import</strong><small>Map daily volumes to production tables</small></span>
+        </button>
+      </nav>
+
+      {activeImportTab === "raw" && importMetrics && (
         <section className="import-success-banner" aria-live="polite">
           <div className="success-banner-icon"><Check size={22} /></div>
           <div className="success-banner-message">
@@ -227,6 +469,31 @@ export default function RawDataImport({ onDone }) {
         </section>
       )}
 
+      {activeImportTab === "production" && (
+        <ProductionImportTab
+          productionFile={productionFile}
+          setProductionFile={setProductionFile}
+          productionStep={productionStep}
+          setProductionStep={setProductionStep}
+          productionInspect={productionInspect}
+          setProductionInspect={setProductionInspect}
+          productionMappings={productionMappings}
+          setProductionMappings={setProductionMappings}
+          productionPreview={productionPreview}
+          setProductionPreview={setProductionPreview}
+          productionSummary={productionSummary}
+          setProductionSummary={setProductionSummary}
+          productionReplaceExisting={productionReplaceExisting}
+          setProductionReplaceExisting={setProductionReplaceExisting}
+          productionBusy={productionBusy}
+          handleProductionInspect={handleProductionInspect}
+          handleProductionPreview={handleProductionPreview}
+          handleProductionComplete={handleProductionComplete}
+        />
+      )}
+
+      {activeImportTab === "raw" && (
+        <>
       <ol className="stepper">
         <li className={step >= 1 ? "active" : ""}><span>1</span><div><strong>Raw Excel Import</strong><small>Clean headers and store raw rows</small></div></li>
         <li className={step >= 2 ? "active" : ""}><span>2</span><div><strong>Column Mapping</strong><small>Link cleaned source columns</small></div></li>
@@ -429,7 +696,10 @@ export default function RawDataImport({ onDone }) {
             <ArrowLeft size={17} /> Go back to Dashboard
           </button>
         </section>
-      )}    </main>
+      )}
+        </>
+      )}
+    </main>
   );
 }
 

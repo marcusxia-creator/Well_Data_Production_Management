@@ -5,6 +5,7 @@ import { fetchAuthStatus, logoutUser } from "./api/client.js";
 import DataBrowser from "./pages/DataBrowser.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
 import Production from "./pages/Production.jsx";
+import ProductionPlot from "./pages/ProductionPlot.jsx";
 import RawDataImport from "./pages/RawDataImport.jsx";
 import WellDashboard from "./pages/WellDashboard.jsx";
 
@@ -17,7 +18,14 @@ const MODULES = {
 
 function moduleFromHash() {
   const value = window.location.hash.replace("#", "");
+  if (value.startsWith("production-plot/")) return "production-plot";
   return MODULES[value] || "dashboard";
+}
+
+function wellIdFromHash() {
+  const value = window.location.hash.replace("#", "");
+  if (!value.startsWith("production-plot/")) return "";
+  return decodeURIComponent(value.replace("production-plot/", ""));
 }
 
 export default function App() {
@@ -83,7 +91,7 @@ export default function App() {
             <LayoutDashboard size={17} />
             <span><strong>Well Dashboard</strong><small>Map and well search</small></span>
           </button>
-          <button className={module === "production" ? "selected" : ""} onClick={() => openModule("production")}>
+          <button className={module === "production" || module === "production-plot" ? "selected" : ""} onClick={() => openModule("production")}>
             <LayoutDashboard size={17} />
             <span><strong>Production Modules</strong><small>Production metrics and reports</small></span>
           </button>
@@ -107,6 +115,8 @@ export default function App() {
           <WellDashboard />
         ) : module === "production" ? (
           <Production />
+        ) : module === "production-plot" ? (
+          <ProductionPlot wellId={wellIdFromHash()} />
         ) : module === "data-import" ? (
           <RawDataImport onDone={() => openModule("dashboard")} />
         ) : (
@@ -116,3 +126,4 @@ export default function App() {
     </div>
   );
 }
+

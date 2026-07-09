@@ -12,7 +12,7 @@ const GOOGLE_MAP_OPTIONS = {
   streetViewControl: false,
 };
 const LEGEND_ITEMS = [
-  ["marker-sp-operator", "SP current operator"],
+  ["marker-saguaro-operator", "Saguaro Petroleum wells"],
   ["marker-oil", "Oil well"],
   ["marker-gas", "Gas well"],
   ["marker-oil-gas", "Oil/gas well"],
@@ -24,6 +24,14 @@ const LEGEND_ITEMS = [
   ["marker-abandoned", "Abandoned"],
 ];
 
+const PRODUCTION_BUBBLE_MIN_SIZE = 18;
+const PRODUCTION_BUBBLE_MAX_SIZE = 78;
+const PRODUCTION_BUBBLE_METRICS = {
+  oil: { field: "cumulative_oil_volume", label: "Cumulative oil", unit: "bbls" },
+  gas: { field: "cumulative_gas_volume", label: "Cumulative gas", unit: "mcf" },
+  fluid: { field: "cumulative_fluid_volume", label: "Cumulative fluid", unit: "bbls" },
+};
+
 const MARKER_LABELS = {
   "marker-oil": "Oil well",
   "marker-gas": "Gas well",
@@ -34,32 +42,55 @@ const MARKER_LABELS = {
   "marker-plugged-oil": "Plugged oil well",
   "marker-dry-hole": "Dry hole",
   "marker-abandoned": "Abandoned well",
-  "marker-sp-operator": "SP wells",
+  "marker-saguaro-operator": "Saguaro Petroleum well",
   "marker-default": "Other well",
 };
 
 function formatDepth(value) {
   if (value == null || value === "") return "-";
   const depth = Number(value);
-  return Number.isFinite(depth) ? depth.toLocaleString() + " m" : "-";
+  return Number.isFinite(depth) ? depth.toLocaleString() + " ft" : "-";
+}
+
+function formatVolume(value, maximumFractionDigits = 0) {
+  const volume = Number(value);
+  if (!Number.isFinite(volume)) return null;
+
+  return volume.toLocaleString(undefined, {
+    maximumFractionDigits,
+  });
 }
 
 function formatProduction(well) {
+  const cumulativeOil = formatVolume(well.cumulative_oil_volume);
+  const cumulativeGas = formatVolume(well.cumulative_gas_volume);
+  const cumulativeFluid = formatVolume(well.cumulative_fluid_volume);
+  const cumulativeValues = [];
+
+  if (cumulativeOil != null) cumulativeValues.push("Cumulative oil " + cumulativeOil + " bbls");
+  if (cumulativeGas != null) cumulativeValues.push("Cumulative gas " + cumulativeGas + " mcf");
+  if (cumulativeFluid != null) cumulativeValues.push("Cumulative fluid " + cumulativeFluid + " bbls");
+
+  if (cumulativeValues.length > 0) {
+    return cumulativeValues.join(" | ");
+  }
+
   const sample = (well.production_samples || []).find((item) => (
     item.oil_m3 != null || item.gas_e3m3 != null || item.water_m3 != null
   ));
   if (!sample) return "No production data";
   const values = [];
-  if (sample.oil_m3 != null) values.push("Oil " + Number(sample.oil_m3).toLocaleString() + " m3");
+  if (sample.oil_m3 != null) values.push("Oil " + Number(sample.oil_m3).toLocaleString() + " bbls");
   if (sample.gas_e3m3 != null) values.push("Gas " + Number(sample.gas_e3m3).toLocaleString() + " e3m3");
-  if (sample.water_m3 != null) values.push("Water " + Number(sample.water_m3).toLocaleString() + " m3");
+  if (sample.water_m3 != null) values.push("Water " + Number(sample.water_m3).toLocaleString() + " bbls");
   return values.join(" | ");
 }
+
 function wellStatusText(well) {
   return `${well.actual_status_text || ""} ${well.well_type || ""} ${well.status || ""}`.toLowerCase();
 }
 
-function isSpOperator(well) {
+function isSaguaroOperator(well) {
   const operatorName = String(
     well.cur_operator_name ||
     well.current_operator ||
@@ -69,11 +100,7 @@ function isSpOperator(well) {
     .trim()
     .toUpperCase();
 
-  return (
-    operatorName === "SP" ||
-    operatorName === "S.P." ||
-    operatorName.includes("SP PETROLEUM")
-  );
+  return operatorName.includes("SAGUARO PETROLEUM");
 }
 
 function markerClassForWell(well) {
@@ -98,6 +125,37 @@ function markerLabelForWell(well) {
   return MARKER_LABELS[markerClassForWell(well)] || MARKER_LABELS["marker-default"];
 }
 
+function bubbleMetricConfig(metricKey) {
+  return PRODUCTION_BUBBLE_METRICS[metricKey] || PRODUCTION_BUBBLE_METRICS.fluid;
+}
+
+function cumulativeBubbleVolume(well, metricKey) {
+  const { field } = bubbleMetricConfig(metricKey);
+  const value = Number(well[field]);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function productionBubbleMetrics(wells, metricKey) {
+  const values = wells.map((well) => cumulativeBubbleVolume(well, metricKey)).filter((value) => value > 0);
+  return {
+    maxVolume: values.length ? Math.max(...values) : 0,
+    metricKey,
+  };
+}
+
+function productionBubbleSize(well, metrics) {
+  const volume = cumulativeBubbleVolume(well, metrics.metricKey);
+  if (!volume || !metrics.maxVolume) return 0;
+  const ratio = Math.sqrt(volume / metrics.maxVolume);
+  return Math.round(PRODUCTION_BUBBLE_MIN_SIZE + ratio * (PRODUCTION_BUBBLE_MAX_SIZE - PRODUCTION_BUBBLE_MIN_SIZE));
+}
+
+function productionBubbleLabel(well, metricKey) {
+  const metric = bubbleMetricConfig(metricKey);
+  const volume = cumulativeBubbleVolume(well, metricKey);
+  return volume ? metric.label + " " + Math.round(volume).toLocaleString() + " " + metric.unit : "";
+}
+
 function mappedWellPositions(wells) {
   return wells
     .filter((well) => well.latitude && well.longitude)
@@ -111,29 +169,39 @@ function googleBoundsForPositions(positions) {
   return bounds;
 }
 
-function markerHtml(well) {
+function markerHtml(well, bubbleMetrics, showProductionBubbles = true) {
   const markerClass = markerClassForWell(well);
-  const operatorClass = isSpOperator(well) ? "marker-sp-operator" : "";
-  return `<span class="well-status-marker ${markerClass} ${operatorClass}" aria-hidden="true"></span>`;
+  const operatorClass = isSaguaroOperator(well) ? "marker-saguaro-operator" : "";
+  const bubbleSize = showProductionBubbles ? productionBubbleSize(well, bubbleMetrics) : 0;
+  const bubbleLabel = productionBubbleLabel(well, bubbleMetrics.metricKey);
+  const plotHref = `#production-plot/${encodeURIComponent(well.uwi)}`;
+  const bubble = bubbleSize
+    ? `<a class="production-fluid-bubble production-plot-link" href="${plotHref}" style="width:${bubbleSize}px;height:${bubbleSize}px" title="${bubbleLabel}; open production plot for ${well.uwi}" aria-label="${bubbleLabel}; open production plot for ${well.uwi}"></a>`
+    : "";
+  return `<span class="well-marker-stack" title="${bubbleLabel}">${bubble}<span class="well-status-marker ${markerClass} ${operatorClass}" aria-hidden="true"></span></span>`;
 }
 
-function leafletIconForWell(well) {
+function leafletIconForWell(well, bubbleMetrics, showProductionBubbles = true) {
+  const bubbleSize = showProductionBubbles ? productionBubbleSize(well, bubbleMetrics) : 0;
+  const iconSize = Math.max(22, bubbleSize || 18);
   return divIcon({
     className: "well-status-marker-icon",
-    html: markerHtml(well),
-    iconSize: [18, 18],
-    iconAnchor: [9, 9],
-    popupAnchor: [0, -8],
+    html: markerHtml(well, bubbleMetrics, showProductionBubbles),
+    iconSize: [iconSize, iconSize],
+    iconAnchor: [iconSize / 2, iconSize / 2],
+    popupAnchor: [0, -(iconSize / 2)],
   });
 }
 
-function MapLegend() {
+function MapLegend({ showProductionBubbles, productionBubbleMetric }) {
+  const bubbleMetric = bubbleMetricConfig(productionBubbleMetric);
   return (
     <div className="map-legend" aria-label="Well status legend">
       <strong>Legend</strong>
       {LEGEND_ITEMS.map(([markerClass, label]) => (
-        <span key={markerClass}><i className={`well-status-marker ${markerClass}`} />{label}</span>
+        <span key={markerClass}><i className={"well-status-marker " + markerClass} />{label}</span>
       ))}
+      {showProductionBubbles && <span><i className="production-fluid-bubble" />{bubbleMetric.label} volume</span>}
     </div>
   );
 }
@@ -165,15 +233,18 @@ function WellPopup({ well }) {
   );
 }
 
-function GoogleWellDot({ well }) {
+function GoogleWellDot({ well, bubbleMetrics, showProductionBubbles }) {
   const markerClass = markerClassForWell(well);
-  const operatorClass = isSpOperator(well) ? "marker-sp-operator" : "";
+  const operatorClass = isSaguaroOperator(well) ? "marker-saguaro-operator" : "";
+  const bubbleSize = showProductionBubbles ? productionBubbleSize(well, bubbleMetrics) : 0;
+  const bubbleLabel = productionBubbleLabel(well, bubbleMetrics.metricKey);
   return (
     <OverlayView
       position={{ lat: Number(well.latitude), lng: Number(well.longitude) }}
       mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}
     >
-      <div className="google-marker-wrap" title={`${markerLabelForWell(well)}: ${well.uwi} ${well.name || ""}`}>
+      <div className="google-marker-wrap" style={{ width: Math.max(18, bubbleSize), height: Math.max(18, bubbleSize) }} title={`${markerLabelForWell(well)}: ${well.uwi} ${well.name || ""}`}>
+        {bubbleSize > 0 && <a className="production-fluid-bubble production-plot-link" href={`#production-plot/${encodeURIComponent(well.uwi)}`} style={{ width: bubbleSize, height: bubbleSize }} title={bubbleLabel + `; open production plot for ${well.uwi}`} aria-label={bubbleLabel + `; open production plot for ${well.uwi}`} onClick={(event) => event.stopPropagation()} />}
         <span className={`well-status-marker ${markerClass} ${operatorClass}`} />
         <span className="google-dot-popup">
           <small><strong>Well Name:</strong> {well.name || "-"}</small>
@@ -189,13 +260,17 @@ function GoogleWellDot({ well }) {
   );
 }
 
-function GoogleWellMap({ wells, mapType }) {
+function GoogleWellMap({ wells, mapType, showProductionBubbles, productionBubbleMetric }) {
   const { isLoaded, loadError } = useJsApiLoader({
     googleMapsApiKey: GOOGLE_API_KEY || "",
   });
 
   const mappedWells = wells.filter((well) => well.latitude && well.longitude);
   const positions = useMemo(() => mappedWellPositions(wells), [wells]);
+  const bubbleMetrics = useMemo(
+    () => showProductionBubbles ? productionBubbleMetrics(wells, productionBubbleMetric) : { maxVolume: 0, metricKey: productionBubbleMetric },
+    [wells, showProductionBubbles, productionBubbleMetric],
+  );
   const center = positions.length
     ? { lat: positions[0][0], lng: positions[0][1] }
     : { lat: DEFAULT_CENTER[0], lng: DEFAULT_CENTER[1] };
@@ -243,16 +318,21 @@ function GoogleWellMap({ wells, mapType }) {
       onLoad={fitGoogleMap}
     >
       {mappedWells.map((well) => (
-        <GoogleWellDot key={well.uwi} well={well} />
+        <GoogleWellDot key={well.uwi} well={well} bubbleMetrics={bubbleMetrics} showProductionBubbles={showProductionBubbles} />
       ))}
     </GoogleMap>
   );
 }
 
-export default function WellMap({ wells, loading }) {
+export default function WellMap({ wells, loading, showProductionBubbles = true, productionBubbleMetric = "fluid" }) {
   const [mapMode, setMapMode] = useState("leaflet");
+  const activeBubbleMetric = PRODUCTION_BUBBLE_METRICS[productionBubbleMetric] ? productionBubbleMetric : "fluid";
   const mappedWells = wells.filter((well) => well.latitude && well.longitude);
   const positions = useMemo(() => mappedWellPositions(wells), [wells]);
+  const bubbleMetrics = useMemo(
+    () => showProductionBubbles ? productionBubbleMetrics(wells, activeBubbleMetric) : { maxVolume: 0, metricKey: activeBubbleMetric },
+    [wells, showProductionBubbles, activeBubbleMetric],
+  );
   const center = positions.length ? positions[0] : DEFAULT_CENTER;
 
   return (
@@ -280,7 +360,7 @@ export default function WellMap({ wells, loading }) {
           Satellite
         </button>
       </div>
-      <MapLegend />
+      <MapLegend showProductionBubbles={showProductionBubbles} productionBubbleMetric={activeBubbleMetric} />
       {loading && (
         <div className="map-loading" aria-live="polite">
           <span className="spinner" />
@@ -298,7 +378,7 @@ export default function WellMap({ wells, loading }) {
             <Marker
               key={well.uwi}
               position={[Number(well.latitude), Number(well.longitude)]}
-              icon={leafletIconForWell(well)}
+              icon={leafletIconForWell(well, bubbleMetrics, showProductionBubbles)}
             >
               <Popup>
                 <WellPopup well={well} />
@@ -307,8 +387,8 @@ export default function WellMap({ wells, loading }) {
           ))}
         </MapContainer>
       )}
-      {mapMode === "google-roadmap" && <GoogleWellMap wells={wells} mapType="roadmap" />}
-      {mapMode === "google-satellite" && <GoogleWellMap wells={wells} mapType="satellite" />}
+      {mapMode === "google-roadmap" && <GoogleWellMap wells={wells} mapType="roadmap" showProductionBubbles={showProductionBubbles} productionBubbleMetric={activeBubbleMetric} />}
+      {mapMode === "google-satellite" && <GoogleWellMap wells={wells} mapType="satellite" showProductionBubbles={showProductionBubbles} productionBubbleMetric={activeBubbleMetric} />}
     </div>
   );
 }

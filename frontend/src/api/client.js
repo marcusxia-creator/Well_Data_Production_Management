@@ -105,6 +105,9 @@ export async function fetchAllWells(filters = {}) {
   return { count, next: null, previous: null, results };
 }
 
+export async function fetchWellProductionDaily(wellId) {
+  return request(`/wells/${encodeURIComponent(wellId)}/production-daily/`);
+}
 export async function fetchWellStatuses() {
   return request("/well-statuses/");
 }
@@ -171,6 +174,33 @@ export async function uploadRawWorkbook(file) {
   return data;
 }
 
+async function productionFileRequest(path, file, payload = {}) {
+  const form = new FormData();
+  form.append("file", file);
+  Object.entries(payload).forEach(([key, value]) => {
+    form.append(key, typeof value === "object" ? JSON.stringify(value) : String(value));
+  });
+  const response = await fetch(`${API_BASE_URL}${path}`, { method: "POST", headers: authHeaders(), body: form });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || `Upload failed: ${response.status}`);
+  return data;
+}
+
+export async function inspectProductionData(file) {
+  return productionFileRequest("/imports/production/inspect/", file);
+}
+
+export async function previewProductionData(file, mappings) {
+  return productionFileRequest("/imports/production/preview/", file, { mappings });
+}
+
+export async function uploadProductionData(file, replaceExisting = true, mappings = {}) {
+  return productionFileRequest("/imports/production/upload/", file, {
+    replace_existing: replaceExisting ? "true" : "false",
+    mappings,
+  });
+}
+
 export async function fetchImportBatch(batchId) {
   return request(`/imports/batches/${batchId}/`);
 }
@@ -214,6 +244,4 @@ export async function executeImportSplit(batchId, replaceExisting = true) {
     body: JSON.stringify({ replace_existing: replaceExisting }),
   });
 }
-
-
 

@@ -9,13 +9,42 @@ import {
 import WellMap from "../components/WellMap.jsx";
 import MultiSelectDropdown from "../components/MultiSelectDropdown.jsx";
 
+const DEFAULT_OPERATOR = "SAGUARO PETROLEUM LLC";
+const PRODUCTION_BUBBLE_OPTIONS = [
+  { value: "fluid", label: "Cumulative fluid" },
+  { value: "oil", label: "Cumulative oil" },
+  { value: "gas", label: "Cumulative gas" },
+];
+
 function formatDepth(value) {
   if (value == null || value === "") return "-";
   const depth = Number(value);
-  return Number.isFinite(depth) ? depth.toLocaleString() + " m" : "-";
+  return Number.isFinite(depth) ? depth.toLocaleString() + " ft" : "-";
+}
+
+function formatVolume(value, maximumFractionDigits = 0) {
+  const volume = Number(value);
+  if (!Number.isFinite(volume)) return null;
+
+  return volume.toLocaleString(undefined, {
+    maximumFractionDigits,
+  });
 }
 
 function formatProduction(well) {
+  const cumulativeOil = formatVolume(well.cumulative_oil_volume);
+  const cumulativeGas = formatVolume(well.cumulative_gas_volume);
+  const cumulativeFluid = formatVolume(well.cumulative_fluid_volume);
+  const cumulativeValues = [];
+
+  if (cumulativeOil != null) cumulativeValues.push("Cumulative oil " + cumulativeOil + " bbls");
+  if (cumulativeGas != null) cumulativeValues.push("Cumulative gas " + cumulativeGas + " mcf");
+  if (cumulativeFluid != null) cumulativeValues.push("Cumulative fluid " + cumulativeFluid + " bbls");
+
+  if (cumulativeValues.length > 0) {
+    return cumulativeValues.join(" | ");
+  }
+
   const sample = (well.production_samples || []).find(
     (item) =>
       item.oil_m3 != null ||
@@ -28,7 +57,7 @@ function formatProduction(well) {
   const values = [];
 
   if (sample.oil_m3 != null) {
-    values.push("Oil " + Number(sample.oil_m3).toLocaleString() + " m3");
+    values.push("Oil " + Number(sample.oil_m3).toLocaleString() + " bbls");
   }
 
   if (sample.gas_e3m3 != null) {
@@ -36,7 +65,7 @@ function formatProduction(well) {
   }
 
   if (sample.water_m3 != null) {
-    values.push("Water " + Number(sample.water_m3).toLocaleString() + " m3");
+    values.push("Water " + Number(sample.water_m3).toLocaleString() + " bbls");
   }
 
   return values.join(" | ");
@@ -46,7 +75,7 @@ export default function Production() {
   const [wells, setWells] = useState([]);
   const [operators, setOperators] = useState([]);
   const [filters, setFilters] = useState({
-    cur_operator_name: [],
+    cur_operator_name: [DEFAULT_OPERATOR],
   });
   const [selectedUwis, setSelectedUwis] = useState([]);
   const [topN, setTopN] = useState(25);
@@ -55,6 +84,7 @@ export default function Production() {
   const [totalCount, setTotalCount] = useState(0);
   const [operatorSearch, setOperatorSearch] = useState("");
   const [wellSearch, setWellSearch] = useState("");
+  const [productionBubbleMetric, setProductionBubbleMetric] = useState("fluid");
 
   // Load operator list only.
   useEffect(() => {
@@ -249,6 +279,18 @@ export default function Production() {
         </div>
 
         <label className="field">
+          <span>Bubble size by</span>
+          <select
+            value={productionBubbleMetric}
+            onChange={(event) => setProductionBubbleMetric(event.target.value)}
+          >
+            {PRODUCTION_BUBBLE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="field">
           <span>Table rows</span>
           <select value={topN} onChange={(event) => setTopN(Number(event.target.value))}>
             <option value={10}>Top 10</option>
@@ -281,7 +323,7 @@ export default function Production() {
         {error && <div className="notice">{error}</div>}
 
         <div className="map-panel">
-          <WellMap wells={selectedWells} loading={loading} />
+          <WellMap wells={selectedWells} loading={loading} productionBubbleMetric={productionBubbleMetric} />
         </div>
 
         <section className="table-section">
@@ -333,3 +375,4 @@ export default function Production() {
     </main>
   );
 }
+

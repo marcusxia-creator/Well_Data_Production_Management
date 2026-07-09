@@ -64,6 +64,9 @@ class WellSerializer(serializers.ModelSerializer):
     completions = serializers.SerializerMethodField()
     formation_tops = serializers.SerializerMethodField()
     production_samples = WellProductionSummarySerializer(source="production_summaries", many=True, read_only=True)
+    cumulative_oil_volume = serializers.SerializerMethodField()
+    cumulative_gas_volume = serializers.SerializerMethodField()
+    cumulative_fluid_volume = serializers.SerializerMethodField()
     created_at = serializers.SerializerMethodField()
     updated_at = serializers.SerializerMethodField()
 
@@ -90,6 +93,9 @@ class WellSerializer(serializers.ModelSerializer):
             "completions",
             "formation_tops",
             "production_samples",
+            "cumulative_oil_volume",
+            "cumulative_gas_volume",
+            "cumulative_fluid_volume",
             "created_at",
             "updated_at",
         ]
@@ -156,6 +162,14 @@ class WellSerializer(serializers.ModelSerializer):
     def get_measured_depth_m(self, obj):
         drilling = self._first_related(obj, "drilling_records")
         return drilling.md_all_wells_m if drilling else None
+
+    def get_cumulative_oil_volume(self, obj):
+        return parse_float(getattr(obj, "cumulative_oil_volume_value", None))
+
+    def get_cumulative_gas_volume(self, obj):
+        return parse_float(getattr(obj, "cumulative_gas_volume_value", None))
+    def get_cumulative_fluid_volume(self, obj):
+        return parse_float(getattr(obj, "cumulative_fluid_volume_value", None))
 
     def get_completions(self, obj):
         return []

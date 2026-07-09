@@ -1,3 +1,5 @@
+import json
+
 from django.core.management import call_command
 from django.shortcuts import get_object_or_404
 from rest_framework.decorators import api_view, parser_classes
@@ -6,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from .models import ImportColumnMapping, ImportMappingTemplate, RawImportBatch
-from .services import apply_mapping_template_to_batch, create_unique_api_table, ingest_workbook, materialize_raw_table, preview_mapped_batch, save_mapping_template_from_batch, serialize_batch, serialize_mapping_template, split_batch
+from .services import apply_mapping_template_to_batch, create_unique_api_table, import_production_file, inspect_production_file, ingest_workbook, materialize_raw_table, preview_mapped_batch, preview_production_file, save_mapping_template_from_batch, serialize_batch, serialize_mapping_template, split_batch
 
 
 @api_view(["GET"])
@@ -40,6 +42,65 @@ def upload_workbook(request):
     except Exception as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return Response(serialize_batch(batch, include_mappings=True), status=status.HTTP_201_CREATED)
+
+
+def production_source_mapping(request):
+    mapping = request.data.get("mappings", {})
+    if isinstance(mapping, str):
+        try:
+            mapping = json.loads(mapping)
+        except json.JSONDecodeError:
+            mapping = {}
+    return mapping if isinstance(mapping, dict) else {}
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def inspect_production_data(request):
+    uploaded_file = request.FILES.get("file")
+    if not uploaded_file:
+        return Response({"detail": "Choose a production CSV or Excel file."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        summary = inspect_production_file(uploaded_file, request.data.get("sheet_name", "").strip())
+    except Exception as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(summary, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def preview_production_data(request):
+    uploaded_file = request.FILES.get("file")
+    if not uploaded_file:
+        return Response({"detail": "Choose a production CSV or Excel file."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        summary = preview_production_file(
+            uploaded_file,
+            production_source_mapping(request),
+            request.data.get("sheet_name", "").strip(),
+        )
+    except Exception as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(summary)
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def upload_production_data(request):
+    uploaded_file = request.FILES.get("file")
+    if not uploaded_file:
+        return Response({"detail": "Choose a production CSV or Excel file."}, status=status.HTTP_400_BAD_REQUEST)
+    replace_existing = str(request.data.get("replace_existing", "true")).casefold() not in {"false", "0", "no"}
+    try:
+        summary = import_production_file(
+            uploaded_file,
+            request.data.get("sheet_name", "").strip(),
+            replace_existing=replace_existing,
+            source_mapping=production_source_mapping(request),
+        )
+    except Exception as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(summary, status=status.HTTP_201_CREATED)
 
 
 @api_view(["GET"])

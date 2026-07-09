@@ -1,14 +1,23 @@
 from django.conf import settings
-from django.db.models import OuterRef, Q, Subquery
+from django.db import connection
+from django.db.models import FloatField, OuterRef, Q, Subquery, Value
 from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets
-from rest_framework.decorators import api_view
+from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 
-from .models import WellCurrentOperator, WellHeader, WellProductionFormation, WellStatus, WellStatusCategory
+from .models import ProductionMonthly, WellCurrentOperator, WellHeader, WellProductionFormation, WellStatus, WellStatusCategory
 from .data_sources import available_databases, compatible_tables, source_options, source_wells
 from .serializers import WellSerializer
+
+
+def production_monthly_table_exists():
+    return "production_monthly" in connection.introspection.table_names()
+
+
+def production_daily_table_exists():
+    return "production_daily" in connection.introspection.table_names()
 
 
 class FastPageNumberPagination(PageNumberPagination):
@@ -55,6 +64,15 @@ class WellViewSet(viewsets.ReadOnlyModelViewSet):
         latest_status = WellStatus.objects.filter(base_uwi=OuterRef("base_uwi")).order_by(
             "-suffix", "-raw_id"
         )
+        production_monthly = ProductionMonthly.objects.filter(base_uwi=OuterRef("base_uwi")).order_by("-production_month")
+        if production_monthly_table_exists():
+            cumulative_oil_annotation = Subquery(production_monthly.values("cumulative_oil")[:1])
+            cumulative_gas_annotation = Subquery(production_monthly.values("cumulative_gas")[:1])
+            cumulative_fluid_annotation = Subquery(production_monthly.values("cumulative_fluid")[:1])
+        else:
+            cumulative_oil_annotation = Value(None, output_field=FloatField())
+            cumulative_gas_annotation = Value(None, output_field=FloatField())
+            cumulative_fluid_annotation = Value(None, output_field=FloatField())
         queryset = WellHeader.objects.all().prefetch_related(
             "locations",
             "statuses",
@@ -66,6 +84,9 @@ class WellViewSet(viewsets.ReadOnlyModelViewSet):
             actual_status_text_value=Subquery(status_category.values("actual_status_text")[:1]),
             operator_value=Subquery(latest_status.values("cur_operator_name")[:1]),
             well_type_value=Subquery(latest_status.values("well_type")[:1]),
+            cumulative_oil_volume_value=cumulative_oil_annotation,
+            cumulative_gas_volume_value=cumulative_gas_annotation,
+            cumulative_fluid_volume_value=cumulative_fluid_annotation,
         )
         status_value = self.request.query_params.getlist("status")
         actual_status = self.request.query_params.getlist("actual_status")
@@ -114,6 +135,35 @@ class WellViewSet(viewsets.ReadOnlyModelViewSet):
         obj = get_object_or_404(queryset, base_uwi=lookup_value)
         self.check_object_permissions(self.request, obj)
         return obj
+
+    @action(detail=True, methods=["get"], url_path="production-daily")
+    def production_daily(self, request, base_uwi=None):
+        well = self.get_object()
+        if not production_daily_table_exists():
+            return Response({"well": WellSerializer(well).data, "rows": []})
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT production_date, daily_oil, daily_water, daily_gas, fluid
+                FROM production_daily
+                WHERE base_uwi = %s
+                ORDER BY production_date
+                """,
+                [well.base_uwi],
+            )
+            rows = [
+                {
+                    "date": production_date.isoformat(),
+                    "daily_oil": float(daily_oil or 0),
+                    "daily_water": float(daily_water or 0),
+                    "daily_gas": float(daily_gas or 0),
+                    "fluid": float(fluid or 0),
+                }
+                for production_date, daily_oil, daily_water, daily_gas, fluid in cursor.fetchall()
+            ]
+
+        return Response({"well": WellSerializer(well).data, "rows": rows})
 
 
 @api_view(["GET"])
@@ -232,3 +282,4 @@ def dashboard_source_wells(request):
     except Exception as exc:
         return Response({"detail": str(exc)}, status=400)
     return Response(payload)
+
