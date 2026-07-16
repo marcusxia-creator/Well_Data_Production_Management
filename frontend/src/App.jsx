@@ -34,6 +34,12 @@ export default function App() {
   const [setupRequired, setSetupRequired] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState("");
+  const allowedModules = user?.allowed_modules || [];
+  const canAccess = (requestedModule) => {
+    const permissionModule = requestedModule === "production-plot" ? "production" : requestedModule;
+    return allowedModules.includes(permissionModule);
+  };
+  const activeModule = canAccess(module) ? module : "dashboard";
 
   useEffect(() => {
     fetchAuthStatus()
@@ -54,7 +60,7 @@ export default function App() {
   }, []);
 
   function openModule(nextModule) {
-    window.location.hash = nextModule;
+    window.location.hash = canAccess(nextModule) ? nextModule : "dashboard";
   }
 
   async function signOut() {
@@ -82,27 +88,31 @@ export default function App() {
         <div className="platform-brand">
           <span className="brand-mark">SP</span>
           <div>
-            <strong>SP Petroleum</strong>
-            <small>Well Production Management</small>
+            <strong>SAGUARO PETROLEUM LLC</strong>
+            <small>Well & Production Management</small>
           </div>
         </div>
         <nav className="module-navigation" aria-label="Platform sections">
-          <button className={module === "dashboard" ? "selected" : ""} onClick={() => openModule("dashboard")}>
+          <button className={activeModule === "dashboard" ? "selected" : ""} onClick={() => openModule("dashboard")}>
             <LayoutDashboard size={17} />
             <span><strong>Well Dashboard</strong><small>Map and well search</small></span>
           </button>
-          <button className={module === "production" || module === "production-plot" ? "selected" : ""} onClick={() => openModule("production")}>
+          <button className={activeModule === "production" || activeModule === "production-plot" ? "selected" : ""} onClick={() => openModule("production")}>
             <LayoutDashboard size={17} />
             <span><strong>Production Modules</strong><small>Production metrics and reports</small></span>
           </button>
-          <button className={module === "data-import" ? "selected" : ""} onClick={() => openModule("data-import")}>
+          {canAccess("data-import") && (
+          <button className={activeModule === "data-import" ? "selected" : ""} onClick={() => openModule("data-import")}>
             <Database size={17} />
             <span><strong>Raw Data Import</strong><small>Upload, map, and split</small></span>
           </button>
-          <button className={module === "data-browser" ? "selected" : ""} onClick={() => openModule("data-browser")}>
+        )}
+          {canAccess("data-browser") && (
+          <button className={activeModule === "data-browser" ? "selected" : ""} onClick={() => openModule("data-browser")}>
             <TableProperties size={17} />
             <span><strong>Data Browser</strong><small>Tables and columns</small></span>
           </button>
+        )}
         </nav>
         <div className="account-menu">
           <span><strong>{user.username}</strong><small>Signed in</small></span>
@@ -111,13 +121,13 @@ export default function App() {
       </header>
 
       <section className="platform-module" aria-live="polite">
-        {module === "dashboard" ? (
+        {activeModule === "dashboard" ? (
           <WellDashboard />
-        ) : module === "production" ? (
+        ) : activeModule === "production" ? (
           <Production />
-        ) : module === "production-plot" ? (
+        ) : activeModule === "production-plot" ? (
           <ProductionPlot wellId={wellIdFromHash()} />
-        ) : module === "data-import" ? (
+        ) : activeModule === "data-import" ? (
           <RawDataImport onDone={() => openModule("dashboard")} />
         ) : (
           <DataBrowser />

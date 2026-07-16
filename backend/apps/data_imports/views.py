@@ -2,16 +2,19 @@ import json
 
 from django.core.management import call_command
 from django.shortcuts import get_object_or_404
-from rest_framework.decorators import api_view, parser_classes
+from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework import status
+
+from config.permissions import IsNotRestrictedViewer
 
 from .models import ImportColumnMapping, ImportMappingTemplate, RawImportBatch
 from .services import apply_mapping_template_to_batch, create_unique_api_table, import_injection_file, import_production_file, inspect_injection_file, inspect_production_file, ingest_workbook, materialize_raw_table, preview_injection_file, preview_mapped_batch, preview_production_file, save_mapping_template_from_batch, serialize_batch, serialize_mapping_template, split_batch
 
 
 @api_view(["GET"])
+@permission_classes([IsNotRestrictedViewer])
 def import_batches(request):
     batches = RawImportBatch.objects.all()[:50]
     return Response([
@@ -32,6 +35,7 @@ def import_batches(request):
 
 
 @api_view(["POST"])
+@permission_classes([IsNotRestrictedViewer])
 @parser_classes([MultiPartParser, FormParser])
 def upload_workbook(request):
     uploaded_file = request.FILES.get("file")
@@ -55,6 +59,7 @@ def production_source_mapping(request):
 
 
 @api_view(["POST"])
+@permission_classes([IsNotRestrictedViewer])
 @parser_classes([MultiPartParser, FormParser])
 def inspect_production_data(request):
     uploaded_file = request.FILES.get("file")
@@ -68,6 +73,7 @@ def inspect_production_data(request):
 
 
 @api_view(["POST"])
+@permission_classes([IsNotRestrictedViewer])
 @parser_classes([MultiPartParser, FormParser])
 def preview_production_data(request):
     uploaded_file = request.FILES.get("file")
@@ -85,6 +91,7 @@ def preview_production_data(request):
 
 
 @api_view(["POST"])
+@permission_classes([IsNotRestrictedViewer])
 @parser_classes([MultiPartParser, FormParser])
 def upload_production_data(request):
     uploaded_file = request.FILES.get("file")
@@ -104,6 +111,7 @@ def upload_production_data(request):
 
 
 @api_view(["POST"])
+@permission_classes([IsNotRestrictedViewer])
 @parser_classes([MultiPartParser, FormParser])
 def inspect_injection_data(request):
     uploaded_file = request.FILES.get("file")
@@ -117,6 +125,7 @@ def inspect_injection_data(request):
 
 
 @api_view(["POST"])
+@permission_classes([IsNotRestrictedViewer])
 @parser_classes([MultiPartParser, FormParser])
 def preview_injection_data(request):
     uploaded_file = request.FILES.get("file")
@@ -130,6 +139,7 @@ def preview_injection_data(request):
 
 
 @api_view(["POST"])
+@permission_classes([IsNotRestrictedViewer])
 @parser_classes([MultiPartParser, FormParser])
 def upload_injection_data(request):
     uploaded_file = request.FILES.get("file")
@@ -143,12 +153,14 @@ def upload_injection_data(request):
     return Response(summary, status=status.HTTP_201_CREATED)
 
 @api_view(["GET"])
+@permission_classes([IsNotRestrictedViewer])
 def import_batch_detail(request, batch_id):
     batch = get_object_or_404(RawImportBatch, pk=batch_id)
     return Response(serialize_batch(batch, include_mappings=True))
 
 
 @api_view(["POST"])
+@permission_classes([IsNotRestrictedViewer])
 def create_raw_table(request, batch_id):
     batch = get_object_or_404(RawImportBatch, pk=batch_id)
     try:
@@ -161,6 +173,7 @@ def create_raw_table(request, batch_id):
 
 
 @api_view(["POST"])
+@permission_classes([IsNotRestrictedViewer])
 def create_unique_table(request, batch_id):
     batch = get_object_or_404(RawImportBatch, pk=batch_id)
     try:
@@ -173,6 +186,7 @@ def create_unique_table(request, batch_id):
 
 
 @api_view(["PUT"])
+@permission_classes([IsNotRestrictedViewer])
 def update_mappings(request, batch_id):
     batch = get_object_or_404(RawImportBatch, pk=batch_id)
     updates = request.data.get("mappings", [])
@@ -197,12 +211,14 @@ def update_mappings(request, batch_id):
     return Response(serialize_batch(batch, include_mappings=True))
 
 @api_view(["GET"])
+@permission_classes([IsNotRestrictedViewer])
 def mapping_templates(request):
     templates = ImportMappingTemplate.objects.prefetch_related("columns").all()
     return Response([serialize_mapping_template(template) for template in templates])
 
 
 @api_view(["POST"])
+@permission_classes([IsNotRestrictedViewer])
 def save_mapping_template(request, batch_id):
     batch = get_object_or_404(RawImportBatch, pk=batch_id)
     try:
@@ -213,6 +229,7 @@ def save_mapping_template(request, batch_id):
 
 
 @api_view(["POST"])
+@permission_classes([IsNotRestrictedViewer])
 def apply_mapping_template(request, batch_id):
     batch = get_object_or_404(RawImportBatch, pk=batch_id)
     template_id = request.data.get("template_id")
@@ -224,6 +241,7 @@ def apply_mapping_template(request, batch_id):
     return Response({"batch": serialize_batch(batch, include_mappings=True), "summary": summary})
 
 @api_view(["GET"])
+@permission_classes([IsNotRestrictedViewer])
 def mapped_preview(request, batch_id):
     batch = get_object_or_404(RawImportBatch, pk=batch_id)
     try:
@@ -234,6 +252,7 @@ def mapped_preview(request, batch_id):
 
 
 @api_view(["POST"])
+@permission_classes([IsNotRestrictedViewer])
 def execute_split(request, batch_id):
     batch = get_object_or_404(RawImportBatch, pk=batch_id)
     try:

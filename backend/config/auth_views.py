@@ -5,16 +5,21 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from config.permissions import is_restricted_viewer
+
 
 User = get_user_model()
 
 
 def user_payload(user):
+    restricted_viewer = is_restricted_viewer(user)
     return {
         "id": user.id,
         "username": user.get_username(),
         "email": user.email,
         "is_staff": user.is_staff,
+        "role": "viewer" if restricted_viewer else "administrator",
+        "allowed_modules": ["dashboard", "production"] if restricted_viewer else ["dashboard", "production", "data-import", "data-browser"],
     }
 
 

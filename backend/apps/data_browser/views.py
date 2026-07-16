@@ -1,11 +1,14 @@
 from django.conf import settings
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+
+from config.permissions import IsNotRestrictedViewer
 
 from .services import available_databases, delete_table, table_catalog, table_rows
 
 
 @api_view(["GET"])
+@permission_classes([IsNotRestrictedViewer])
 def databases(request):
     try:
         database_names = available_databases()
@@ -26,6 +29,7 @@ def databases(request):
 
 
 @api_view(["GET"])
+@permission_classes([IsNotRestrictedViewer])
 def query_table(request):
     database_name = request.query_params.get("database")
     table_name = request.query_params.get("table")
@@ -38,6 +42,7 @@ def query_table(request):
         return Response({"detail": str(exc)}, status=400)
 
 @api_view(["DELETE"])
+@permission_classes([IsNotRestrictedViewer])
 def delete_data_table(request):
     database_name = request.data.get("database")
     table_name = request.data.get("table")
