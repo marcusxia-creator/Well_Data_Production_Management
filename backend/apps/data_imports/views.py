@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from .models import ImportColumnMapping, ImportMappingTemplate, RawImportBatch
-from .services import apply_mapping_template_to_batch, create_unique_api_table, import_production_file, inspect_production_file, ingest_workbook, materialize_raw_table, preview_mapped_batch, preview_production_file, save_mapping_template_from_batch, serialize_batch, serialize_mapping_template, split_batch
+from .services import apply_mapping_template_to_batch, create_unique_api_table, import_injection_file, import_production_file, inspect_injection_file, inspect_production_file, ingest_workbook, materialize_raw_table, preview_injection_file, preview_mapped_batch, preview_production_file, save_mapping_template_from_batch, serialize_batch, serialize_mapping_template, split_batch
 
 
 @api_view(["GET"])
@@ -102,6 +102,45 @@ def upload_production_data(request):
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return Response(summary, status=status.HTTP_201_CREATED)
 
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def inspect_injection_data(request):
+    uploaded_file = request.FILES.get("file")
+    if not uploaded_file:
+        return Response({"detail": "Choose an injection CSV or Excel file."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        summary = inspect_injection_file(uploaded_file, request.data.get("sheet_name", "").strip())
+    except Exception as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(summary, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def preview_injection_data(request):
+    uploaded_file = request.FILES.get("file")
+    if not uploaded_file:
+        return Response({"detail": "Choose an injection CSV or Excel file."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        summary = preview_injection_file(uploaded_file, production_source_mapping(request), request.data.get("sheet_name", "").strip())
+    except Exception as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(summary)
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def upload_injection_data(request):
+    uploaded_file = request.FILES.get("file")
+    if not uploaded_file:
+        return Response({"detail": "Choose an injection CSV or Excel file."}, status=status.HTTP_400_BAD_REQUEST)
+    replace_existing = str(request.data.get("replace_existing", "true")).casefold() not in {"false", "0", "no"}
+    try:
+        summary = import_injection_file(uploaded_file, request.data.get("sheet_name", "").strip(), replace_existing=replace_existing, source_mapping=production_source_mapping(request))
+    except Exception as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    return Response(summary, status=status.HTTP_201_CREATED)
 
 @api_view(["GET"])
 def import_batch_detail(request, batch_id):
@@ -207,5 +246,3 @@ def execute_split(request, batch_id):
         batch.save(update_fields=["status", "error_message"])
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     return Response({"batch": serialize_batch(batch), "summary": summary})
-
-

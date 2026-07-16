@@ -26,6 +26,8 @@ TYPE_MAP = {
 }
 PRODUCTION_DAILY_TABLE = "production_daily"
 PRODUCTION_MONTHLY_TABLE = "production_monthly"
+INJECTION_DAILY_TABLE = "injection_daily"
+INJECTION_MONTHLY_TABLE = "injection_monthly"
 PRODUCTION_COLUMN_ALIASES = {
     "base_uwi": (
         "base_uwi", "well_id", "well id", "wellid", "uwi", "api", "well", "well_number",
@@ -807,6 +809,213 @@ def import_production_file(uploaded_file, requested_sheet="", replace_existing=T
         "preview": [serialize_production_row(row) for row in parsed_rows[:20]],
     }
 
+INJECTION_REQUIRED_FIELDS = ("base_uwi", "injection_date")
+INJECTION_MAPPING_FIELDS = (
+    {"target": "base_uwi", "label": "base_uwi", "type": "text", "required": True, "rule": "Well ID common key"},
+    {"target": "injection_date", "label": "date", "type": "date", "required": True, "rule": "Daily injection date"},
+    {"target": "daily_water", "label": "water", "type": "double precision", "required": False, "rule": "Injected water volume (bbl)"},
+    {"target": "daily_gas", "label": "gas", "type": "double precision", "required": False, "rule": "Injected gas volume (mcf)"},
+    {"target": "daily_steam", "label": "steam", "type": "double precision", "required": False, "rule": "Injected steam volume (bbl)"},
+    {"target": "injection_pressure", "label": "pressure", "type": "double precision", "required": False, "rule": "Injection pressure"},
+)
+INJECTION_COLUMN_ALIASES = {
+    "base_uwi": PRODUCTION_COLUMN_ALIASES["base_uwi"],
+    "injection_date": ("date", "injection_date", "injection date", "inject_date", "inject date", "day"),
+    "daily_water": ("daily_water", "daily water", "water", "water_injected", "water injected", "water_bbl", "water bbl"),
+    "daily_gas": ("daily_gas", "daily gas", "gas", "gas_injected", "gas injected", "gas_mcf", "gas mcf"),
+    "daily_steam": ("daily_steam", "daily steam", "steam", "steam_injected", "steam injected", "steam_bbl", "steam bbl"),
+    "injection_pressure": ("injection_pressure", "injection pressure", "pressure", "pressure_psi", "pressure psi"),
+}
+
+
+def suggest_injection_columns(headers):
+    normalized = {header_key(header): index for index, header in enumerate(headers)}
+    mapping = {}
+    for target, aliases in INJECTION_COLUMN_ALIASES.items():
+        for alias in aliases:
+            key = header_key(alias)
+            if key in normalized:
+                mapping[target] = headers[normalized[key]]
+                break
+    return mapping
+
+
+def resolve_injection_column_map(headers, source_mapping=None):
+    header_indexes = {header: index for index, header in enumerate(headers)}
+    normalized = {header_key(header): header for header in headers}
+    suggested = suggest_injection_columns(headers)
+    resolved = {}
+    for field in INJECTION_MAPPING_FIELDS:
+        target = field["target"]
+        configured = str((source_mapping or {}).get(target) or "").strip()
+        source_header = configured if configured in header_indexes else normalized.get(header_key(configured), "")
+        if not source_header:
+            source_header = suggested.get(target, "")
+        if source_header:
+            resolved[target] = header_indexes[source_header]
+    missing = [field for field in INJECTION_REQUIRED_FIELDS if field not in resolved]
+    if missing:
+        raise ValueError("Injection import is missing required mappings: " + ", ".join(missing))
+    if not any(field in resolved for field in ("daily_water", "daily_gas", "daily_steam")):
+        raise ValueError("Map at least one injected-volume field: water, gas, or steam.")
+    return resolved
+
+
+def injection_source_value(values, column_map, target):
+    index = column_map.get(target)
+    return values[index] if index is not None and index < len(values) else None
+
+
+def parse_injection_number(value, label):
+    if value in (None, ""):
+        return Decimal("0"), None
+    try:
+        number = Decimal(str(value).strip().replace(",", ""))
+    except InvalidOperation:
+        return Decimal("0"), f"{label} is not numeric"
+    if number < 0:
+        return number, f"{label} cannot be negative"
+    return number, None
+
+
+def build_injection_rows(headers, source_rows, source_mapping=None, limit=None):
+    column_map = resolve_injection_column_map(headers, source_mapping)
+    parsed_rows, validation_errors = [], []
+    for row_number, source_values in enumerate(source_rows, start=2):
+        values = list(source_values)
+        if not any(value not in (None, "") for value in values):
+            continue
+        base_uwi = str(injection_source_value(values, column_map, "base_uwi") or "").strip()
+        injection_date = parse_production_date(injection_source_value(values, column_map, "injection_date"))
+        errors = []
+        if not base_uwi:
+            errors.append("base_uwi is required")
+        if not injection_date:
+            errors.append("date is invalid or missing")
+        volumes = {}
+        for target, label in (("daily_water", "water"), ("daily_gas", "gas"), ("daily_steam", "steam"), ("injection_pressure", "pressure")):
+            volumes[target], error = parse_injection_number(injection_source_value(values, column_map, target), label)
+            if error:
+                errors.append(error)
+        if errors:
+            validation_errors.append({"row_number": row_number, "base_uwi": base_uwi, "errors": errors})
+            continue
+        parsed_rows.append({"base_uwi": base_uwi, "injection_date": injection_date, **volumes})
+        if limit and len(parsed_rows) >= limit:
+            break
+    return parsed_rows, validation_errors, column_map
+
+
+def serialize_injection_row(row):
+    return {
+        "base_uwi": row["base_uwi"], "injection_date": row["injection_date"].isoformat(),
+        "daily_water": float(row["daily_water"]), "daily_gas": float(row["daily_gas"]),
+        "daily_steam": float(row["daily_steam"]), "injection_pressure": float(row["injection_pressure"]),
+    }
+
+
+def inspect_injection_file(uploaded_file, requested_sheet=""):
+    headers, source_rows, sheet_name = read_tabular_upload(uploaded_file, requested_sheet)
+    sheet_names = [sheet_name]
+    if Path(uploaded_file.name).suffix.lower() in {".xlsx", ".xlsm"}:
+        uploaded_file.seek(0)
+        workbook = load_workbook(uploaded_file, read_only=True, data_only=True)
+        sheet_names = workbook.sheetnames
+        workbook.close()
+    return {
+        "file_name": uploaded_file.name, "sheet_name": sheet_name, "sheet_names": sheet_names,
+        "headers": headers, "row_count": sum(1 for row in source_rows if any(value not in (None, "") for value in row)),
+        "fields": list(INJECTION_MAPPING_FIELDS), "suggested_mappings": suggest_injection_columns(headers),
+        "preview": [{headers[i] or f"column_{i + 1}": json_value(value) for i, value in enumerate(row[:len(headers)])} for row in source_rows[:20]],
+    }
+
+
+def preview_injection_file(uploaded_file, source_mapping, requested_sheet=""):
+    headers, source_rows, sheet_name = read_tabular_upload(uploaded_file, requested_sheet)
+    rows, errors, column_map = build_injection_rows(headers, source_rows, source_mapping)
+    if not rows:
+        raise ValueError("No valid injection rows were found. Review the validation errors and mappings.")
+    return {
+        "file_name": uploaded_file.name, "sheet_name": sheet_name,
+        "daily_table_name": INJECTION_DAILY_TABLE, "monthly_table_name": INJECTION_MONTHLY_TABLE,
+        "valid_row_count": len(rows), "invalid_row_count": len(errors), "validation_errors": errors[:50],
+        "mapped_columns": {target: headers[index] for target, index in column_map.items()},
+        "preview": [serialize_injection_row(row) for row in rows[:20]],
+    }
+
+
+def ensure_injection_tables(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS injection_daily (
+            base_uwi text NOT NULL, injection_date date NOT NULL,
+            daily_water double precision NOT NULL DEFAULT 0, daily_gas double precision NOT NULL DEFAULT 0,
+            daily_steam double precision NOT NULL DEFAULT 0, injection_pressure double precision NOT NULL DEFAULT 0,
+            source_file text, imported_at timestamptz NOT NULL DEFAULT now(),
+            UNIQUE (base_uwi, injection_date)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS injection_monthly (
+            base_uwi text NOT NULL, injection_month date NOT NULL,
+            monthly_water double precision NOT NULL DEFAULT 0, monthly_gas double precision NOT NULL DEFAULT 0,
+            monthly_steam double precision NOT NULL DEFAULT 0, cumulative_water double precision NOT NULL DEFAULT 0,
+            cumulative_gas double precision NOT NULL DEFAULT 0, cumulative_steam double precision NOT NULL DEFAULT 0,
+            updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE (base_uwi, injection_month)
+        )
+    """)
+
+
+@transaction.atomic
+def import_injection_file(uploaded_file, requested_sheet="", replace_existing=True, source_mapping=None):
+    headers, source_rows, sheet_name = read_tabular_upload(uploaded_file, requested_sheet)
+    rows, errors, column_map = build_injection_rows(headers, source_rows, source_mapping)
+    if not rows:
+        raise ValueError("No valid injection rows were found. Review the file and mappings.")
+    base_uwis = sorted({row["base_uwi"] for row in rows})
+    imported_at = timezone.now()
+    with connection.cursor() as cursor:
+        ensure_injection_tables(cursor)
+        if replace_existing:
+            cursor.execute("TRUNCATE TABLE injection_daily, injection_monthly")
+        cursor.executemany("""
+            INSERT INTO injection_daily
+                (base_uwi, injection_date, daily_water, daily_gas, daily_steam, injection_pressure, source_file, imported_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (base_uwi, injection_date) DO UPDATE SET
+                daily_water=EXCLUDED.daily_water, daily_gas=EXCLUDED.daily_gas,
+                daily_steam=EXCLUDED.daily_steam, injection_pressure=EXCLUDED.injection_pressure,
+                source_file=EXCLUDED.source_file, imported_at=EXCLUDED.imported_at
+        """, [[row["base_uwi"], row["injection_date"], row["daily_water"], row["daily_gas"], row["daily_steam"], row["injection_pressure"], uploaded_file.name, imported_at] for row in rows])
+        cursor.execute("DELETE FROM injection_monthly WHERE base_uwi = ANY(%s)", [base_uwis])
+        cursor.execute("""
+            INSERT INTO injection_monthly (
+                base_uwi, injection_month, monthly_water, monthly_gas, monthly_steam,
+                cumulative_water, cumulative_gas, cumulative_steam, updated_at
+            )
+            WITH monthly AS (
+                SELECT base_uwi, date_trunc('month', injection_date)::date injection_month,
+                       SUM(daily_water) monthly_water, SUM(daily_gas) monthly_gas, SUM(daily_steam) monthly_steam
+                FROM injection_daily WHERE base_uwi = ANY(%s)
+                GROUP BY base_uwi, date_trunc('month', injection_date)::date
+            )
+            SELECT base_uwi, injection_month, monthly_water, monthly_gas, monthly_steam,
+                   SUM(monthly_water) OVER (PARTITION BY base_uwi ORDER BY injection_month),
+                   SUM(monthly_gas) OVER (PARTITION BY base_uwi ORDER BY injection_month),
+                   SUM(monthly_steam) OVER (PARTITION BY base_uwi ORDER BY injection_month), now()
+            FROM monthly
+        """, [base_uwis])
+        cursor.execute("SELECT COUNT(*) FROM injection_monthly WHERE base_uwi = ANY(%s)", [base_uwis])
+        monthly_count = cursor.fetchone()[0]
+    return {
+        "file_name": uploaded_file.name, "sheet_name": sheet_name,
+        "daily_table_name": INJECTION_DAILY_TABLE, "monthly_table_name": INJECTION_MONTHLY_TABLE,
+        "daily_row_count": len(rows), "monthly_row_count": monthly_count, "well_count": len(base_uwis),
+        "valid_row_count": len(rows), "invalid_row_count": len(errors), "validation_errors": errors[:50],
+        "replace_existing": replace_existing,
+        "mapped_columns": {target: headers[index] for target, index in column_map.items()},
+        "preview": [serialize_injection_row(row) for row in rows[:20]],
+    }
+
 def mapping_value(raw_row, mapping, fallback_raw_id=None, source_file="", imported_at=None):
     if mapping.source_column:
         value = raw_row.get(mapping.source_column)
@@ -1050,5 +1259,3 @@ def split_batch(batch, replace_existing=True):
     batch.result_summary = summary
     batch.save(update_fields=["status", "completed_at", "error_message", "result_summary"])
     return summary
-
-

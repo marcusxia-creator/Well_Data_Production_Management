@@ -95,7 +95,7 @@ h3 {
 }
 
 h1 {
-  font-size: 2rem;
+  font-size: 1.5rem;
 }
 
 h2 {
@@ -498,7 +498,7 @@ th {
 .module-navigation small {
   margin-top: 2px;
   color: #718386;
-  font-size: 0.72rem;
+  font-size: 0.76rem;
 }
 
 .module-navigation {
@@ -1049,7 +1049,7 @@ th {
   }
 }
 .two-stepper {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   max-width: 620px;
 }
 
@@ -1386,7 +1386,7 @@ th {
 
 @media (max-width: 1100px) {
   .mapping-workspace > .batch-summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -2625,7 +2625,7 @@ th {
 
 .import-subtabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin: 22px 0;
 }
@@ -2710,6 +2710,7 @@ th {
   position: relative;
   z-index: 2;
 }
+
 
 .map-legend .production-fluid-bubble {
   position: static;

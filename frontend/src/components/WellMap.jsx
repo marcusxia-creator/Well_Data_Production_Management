@@ -1,5 +1,7 @@
 import { GoogleMap, OverlayView, useJsApiLoader } from "@react-google-maps/api";
-import { divIcon, latLngBounds } from "leaflet";
+import L, { divIcon, latLngBounds } from "leaflet";
+import "leaflet-draw";
+import "leaflet-draw/dist/leaflet.draw.css";
 import { useEffect, useMemo, useState } from "react";
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
 
@@ -219,6 +221,37 @@ function FitLeafletToWells({ positions }) {
   return null;
 }
 
+function AnnotationDrawingTools() {
+  const map = useMap();
+  useEffect(() => {
+    const annotationPane = map.createPane("annotationPane");
+    annotationPane.style.zIndex = "650";
+    annotationPane.style.pointerEvents = "auto";
+
+    const annotations = new L.FeatureGroup();
+    map.addLayer(annotations);
+    const controls = new L.Control.Draw({
+      position: "topleft",
+      draw: {
+        polyline: { shapeOptions: { pane: "annotationPane", color: "#d63b2f", weight: 4 } },
+        circle: { shapeOptions: { pane: "annotationPane", color: "#d63b2f", fillColor: "#f26b5e", fillOpacity: 0.18, weight: 3 } },
+        polygon: false, rectangle: false, marker: false, circlemarker: false,
+      },
+      edit: { featureGroup: annotations },
+    });
+    const handleCreated = (event) => annotations.addLayer(event.layer);
+    map.addControl(controls);
+    map.on(L.Draw.Event.CREATED, handleCreated);
+    return () => {
+      map.off(L.Draw.Event.CREATED, handleCreated);
+      map.removeControl(controls);
+      map.removeLayer(annotations);
+      annotationPane.remove();
+    };
+  }, [map]);
+  return null;
+}
+
 function WellPopup({ well }) {
   return (
     <div className="well-popup-details">
@@ -370,6 +403,7 @@ export default function WellMap({ wells, loading, showProductionBubbles = true, 
       {mapMode === "leaflet" && (
         <MapContainer center={center} zoom={positions.length ? 7 : 5} scrollWheelZoom className="well-map">
           <FitLeafletToWells positions={positions} />
+          <AnnotationDrawingTools />
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

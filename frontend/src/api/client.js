@@ -194,6 +194,21 @@ export async function previewProductionData(file, mappings) {
   return productionFileRequest("/imports/production/preview/", file, { mappings });
 }
 
+export async function inspectInjectionData(file, sheetName = "") {
+  return productionFileRequest("/imports/injection/inspect/", file, { sheet_name: sheetName });
+}
+
+export async function previewInjectionData(file, mappings, sheetName = "") {
+  return productionFileRequest("/imports/injection/preview/", file, { mappings, sheet_name: sheetName });
+}
+
+export async function uploadInjectionData(file, replaceExisting = true, mappings = {}, sheetName = "") {
+  return productionFileRequest("/imports/injection/upload/", file, {
+    replace_existing: replaceExisting ? "true" : "false",
+    mappings,
+    sheet_name: sheetName,
+  });
+}
 export async function uploadProductionData(file, replaceExisting = true, mappings = {}) {
   return productionFileRequest("/imports/production/upload/", file, {
     replace_existing: replaceExisting ? "true" : "false",
@@ -244,4 +259,3 @@ export async function executeImportSplit(batchId, replaceExisting = true) {
     body: JSON.stringify({ replace_existing: replaceExisting }),
   });
 }
-

@@ -1,7 +1,7 @@
 import { ArrowLeft, ArrowRight, Check, Database, FileSpreadsheet, Save, Search, Upload } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { applyMappingTemplate, createRawImportTable, executeImportSplit, fetchMappedPreview, fetchMappingTemplates, inspectProductionData, previewProductionData, saveImportMappings, saveMappingTemplate, uploadProductionData, uploadRawWorkbook } from "../api/client.js";
+import { applyMappingTemplate, createRawImportTable, executeImportSplit, fetchMappedPreview, fetchMappingTemplates, inspectInjectionData, inspectProductionData, previewInjectionData, previewProductionData, saveImportMappings, saveMappingTemplate, uploadInjectionData, uploadProductionData, uploadRawWorkbook } from "../api/client.js";
 
 function targetColumnLabel(mapping) {
   return mapping.target_column === "md_all_wells_m" ? "measured_depth_m" : mapping.target_column;
@@ -179,6 +179,81 @@ function ProductionImportTab({
   );
 }
 
+function InjectionPreviewTable({ rows = [] }) {
+  return (
+    <div className="mapped-preview-wrap production-preview-wrap">
+      <table>
+        <thead><tr><th>base_uwi</th><th>date</th><th>water</th><th>gas</th><th>steam</th><th>pressure</th></tr></thead>
+        <tbody>
+          {rows.map((row, index) => <tr key={`${row.base_uwi}-${row.injection_date}-${index}`}><td>{row.base_uwi}</td><td>{row.injection_date}</td><td>{row.daily_water}</td><td>{row.daily_gas}</td><td>{row.daily_steam}</td><td>{row.injection_pressure}</td></tr>)}
+          {!rows.length && <tr><td colSpan={6} className="empty">No valid injection rows to preview.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function InjectionImportTab({ state, setState, busy, onInspect, onPreview, onComplete }) {
+  const { file, step, inspect, mappings, preview, summary, replaceExisting, sheetName } = state;
+  const required = (inspect?.fields || []).filter((field) => field.required);
+  const unresolved = required.filter((field) => !mappings[field.target]).length;
+  const set = (changes) => setState((current) => ({ ...current, ...changes }));
+
+  return (
+    <>
+      <ol className="stepper production-stepper">
+        <li className={step >= 1 ? "active" : ""}><span>1</span><div><strong>Upload & Sheet</strong><small>Inspect headers and data</small></div></li>
+        <li className={step >= 2 ? "active" : ""}><span>2</span><div><strong>Column Mapping</strong><small>Map injection fields</small></div></li>
+        <li className={step >= 3 ? "active" : ""}><span>3</span><div><strong>Validate Records</strong><small>Review valid and invalid rows</small></div></li>
+        <li className={step >= 4 ? "active" : ""}><span>4</span><div><strong>Complete</strong><small>PostgreSQL results</small></div></li>
+      </ol>
+
+      {step === 1 && <section className="sequential-page">
+        <section className="import-workspace upload-workspace">
+          <div className="upload-panel">
+            <FileSpreadsheet size={34} /><h2>Step 1: Import daily injection file</h2>
+            <p>Select a CSV or Excel file, then choose the worksheet containing daily injection records.</p>
+            <form onSubmit={onInspect}>
+              <label className="file-picker"><Upload size={18} /><span>{file ? file.name : "Select .csv, .xlsx, or .xlsm injection file"}</span><input type="file" accept=".csv,.xlsx,.xlsm" onChange={(event) => set({ file: event.target.files?.[0] || null, inspect: null, preview: null, summary: null, sheetName: "" })} /></label>
+              <button className="primary-command" disabled={!file || busy}>{busy ? "Inspecting file..." : "Inspect File"}<Upload size={17} /></button>
+            </form>
+          </div>
+          <aside className="import-notes"><Database size={22} /><h3>Injection storage</h3><p>Validated daily rows are written to <code>injection_daily</code>. Monthly and cumulative volumes are generated in <code>injection_monthly</code>.</p></aside>
+        </section>
+        {inspect && <div className="step-one-results">
+          <div className="batch-summary">
+            <div><span>File</span><strong>{inspect.file_name}</strong></div>
+            <div><span>Worksheet</span><select value={sheetName || inspect.sheet_name} onChange={(event) => set({ sheetName: event.target.value })}>{(inspect.sheet_names || [inspect.sheet_name]).map((sheet) => <option key={sheet}>{sheet}</option>)}</select></div>
+            <div><span>Rows</span><strong>{inspect.row_count.toLocaleString()}</strong></div><div><span>Columns</span><strong>{inspect.headers.length}</strong></div>
+          </div>
+          {(inspect.sheet_names || []).length > 1 && <button className="secondary-command" type="button" disabled={busy || (sheetName || inspect.sheet_name) === inspect.sheet_name} onClick={() => onInspect(null, sheetName)}>Load Selected Sheet</button>}
+          <section className="cleaned-header-section"><div className="section-heading"><div><h2>Source headers</h2><p>Previewed before injection field mapping.</p></div></div><div className="header-chip-list">{inspect.headers.map((header, index) => <span key={`${header}-${index}`}><small>{index + 1}</small>{header || `column_${index + 1}`}</span>)}</div></section>
+          <div className="raw-preview-wrap"><table><thead><tr>{inspect.headers.map((header, index) => <th key={`${header}-${index}`}>{header || `column_${index + 1}`}</th>)}</tr></thead><tbody>{(inspect.preview || []).slice(0, 10).map((row, index) => <tr key={index}>{inspect.headers.map((header, column) => <td key={`${header}-${column}`}>{String(row[header || `column_${column + 1}`] ?? "")}</td>)}</tr>)}</tbody></table></div>
+        </div>}
+        <footer className="sequential-page-actions"><span>{inspect ? "File and worksheet inspected. Continue to map fields." : "Inspect an injection file to continue."}</span><button className="primary-command" disabled={!inspect || busy} onClick={() => set({ step: 2 })}>Next: Column Mapping <ArrowRight size={17} /></button></footer>
+      </section>}
+
+      {step === 2 && inspect && <section className="sequential-page mapping-workspace">
+        <div className="batch-summary"><div><span>File</span><strong>{inspect.file_name}</strong></div><div><span>Worksheet</span><strong>{inspect.sheet_name}</strong></div><div><span>Target</span><strong>injection_daily</strong></div><div><span>Required mapped</span><strong>{required.length - unresolved} / {required.length}</strong></div></div>
+        <section className="mapping-section"><div className="mapping-toolbar"><div><h2>Step 2: Injection column mapping</h2><p>Map identifiers, date, injected volumes, and optional pressure.</p></div><div className="mapping-metrics"><span className={unresolved ? "warning-count" : "ok-count"}>{unresolved} required unresolved</span></div></div>
+          <div className="mapping-table-wrap"><table className="mapping-table production-mapping-table"><thead><tr><th>Target table</th><th>Database field</th><th>Source column</th><th>Type</th><th>Rule</th></tr></thead><tbody>{inspect.fields.map((field) => <tr key={field.target} className={field.required && !mappings[field.target] ? "mapping-required" : ""}><td><strong>injection_daily</strong></td><td>{field.label}{field.required && <span className="required-mark">Required</span>}</td><td><select value={mappings[field.target] || ""} onChange={(event) => set({ mappings: { ...mappings, [field.target]: event.target.value } })}><option value="">Not mapped</option>{inspect.headers.map((header, index) => <option key={`${header}-${index}`} value={header}>{header || `column_${index + 1}`}</option>)}</select></td><td>{field.type}</td><td>{field.rule}</td></tr>)}</tbody></table></div>
+        </section>
+        <footer className="sequential-page-actions"><button className="secondary-command" disabled={busy} onClick={() => set({ step: 1 })}><ArrowLeft size={17} /> Back</button><button className="primary-command" disabled={busy || unresolved > 0} onClick={onPreview}>{busy ? "Validating..." : "Next: Validate Records"}<ArrowRight size={17} /></button></footer>
+      </section>}
+
+      {step === 3 && preview && <section className="sequential-page mapped-review-workspace">
+        <section className="mapped-review-section"><div className="mapping-toolbar"><div><h2>Step 3: Validate injection records</h2><p>Only valid rows will be imported into PostgreSQL.</p></div></div>
+          <div className="batch-summary"><div><span>Valid rows</span><strong>{preview.valid_row_count.toLocaleString()}</strong></div><div><span>Invalid rows</span><strong>{preview.invalid_row_count.toLocaleString()}</strong></div><div><span>Daily table</span><strong>{preview.daily_table_name}</strong></div><div><span>Monthly table</span><strong>{preview.monthly_table_name}</strong></div></div>
+          <InjectionPreviewTable rows={preview.preview} />
+          {!!preview.validation_errors?.length && <section className="process-result validation-errors"><div><h3>Validation errors</h3><p>First {preview.validation_errors.length} invalid rows</p></div><div className="mapped-preview-wrap"><table><thead><tr><th>Source row</th><th>Well</th><th>Errors</th></tr></thead><tbody>{preview.validation_errors.map((item) => <tr key={item.row_number}><td>{item.row_number}</td><td>{item.base_uwi || "-"}</td><td>{item.errors.join("; ")}</td></tr>)}</tbody></table></div></section>}
+        </section>
+        <footer className="sequential-page-actions mapping-complete-actions"><button className="secondary-command" disabled={busy} onClick={() => set({ step: 2 })}><ArrowLeft size={17} /> Back to Mapping</button><label><input type="checkbox" checked={replaceExisting} onChange={(event) => set({ replaceExisting: event.target.checked })} /> Replace existing injection data</label><button className="primary-command" disabled={busy || !preview.valid_row_count} onClick={onComplete}>{busy ? "Importing..." : "Import Valid Records"}<Check size={17} /></button></footer>
+      </section>}
+
+      {step === 4 && summary && <section className="sequential-page completion-workspace import-complete-page"><div className="completion-icon"><Check size={28} /></div><h2>Injection import is complete</h2><p>Valid daily injection rows were imported and monthly cumulative injection was generated.</p><div className="result-grid"><div><span>Daily table</span><strong>{summary.daily_table_name}</strong></div><div><span>Daily rows</span><strong>{summary.daily_row_count.toLocaleString()}</strong></div><div><span>Monthly table</span><strong>{summary.monthly_table_name}</strong></div><div><span>Monthly rows</span><strong>{summary.monthly_row_count.toLocaleString()}</strong></div><div><span>Wells</span><strong>{summary.well_count.toLocaleString()}</strong></div><div><span>Invalid rows skipped</span><strong>{summary.invalid_row_count.toLocaleString()}</strong></div></div><InjectionPreviewTable rows={summary.preview} /></section>}
+    </>
+  );
+}
 export default function RawDataImport({ onDone }) {
   const [activeImportTab, setActiveImportTab] = useState("raw");
   const [file, setFile] = useState(null);
@@ -208,6 +283,11 @@ export default function RawDataImport({ onDone }) {
   const [productionPreview, setProductionPreview] = useState(null);
   const [productionSummary, setProductionSummary] = useState(null);
   const [productionBusy, setProductionBusy] = useState(false);
+  const [injectionBusy, setInjectionBusy] = useState(false);
+  const [injectionState, setInjectionState] = useState({
+    file: null, step: 1, inspect: null, mappings: {}, preview: null, summary: null,
+    replaceExisting: true, sheetName: "",
+  });
 
   useEffect(() => {
     let active = true;
@@ -325,6 +405,34 @@ export default function RawDataImport({ onDone }) {
     }
   }
 
+  async function handleInjectionInspect(event, selectedSheet = "") {
+    event?.preventDefault();
+    if (!injectionState.file) return;
+    setInjectionBusy(true); setError("");
+    try {
+      const inspected = await inspectInjectionData(injectionState.file, selectedSheet || injectionState.sheetName);
+      setInjectionState((current) => ({ ...current, inspect: inspected, sheetName: inspected.sheet_name, mappings: inspected.suggested_mappings || {}, preview: null, summary: null }));
+    } catch (uploadError) { setError(uploadError.message); }
+    finally { setInjectionBusy(false); }
+  }
+
+  async function handleInjectionPreview() {
+    setInjectionBusy(true); setError("");
+    try {
+      const preview = await previewInjectionData(injectionState.file, injectionState.mappings, injectionState.sheetName);
+      setInjectionState((current) => ({ ...current, preview, summary: null, step: 3 }));
+    } catch (previewError) { setError(previewError.message); }
+    finally { setInjectionBusy(false); }
+  }
+
+  async function handleInjectionComplete() {
+    setInjectionBusy(true); setError("");
+    try {
+      const summary = await uploadInjectionData(injectionState.file, injectionState.replaceExisting, injectionState.mappings, injectionState.sheetName);
+      setInjectionState((current) => ({ ...current, summary, step: 4 }));
+    } catch (uploadError) { setError(uploadError.message); }
+    finally { setInjectionBusy(false); }
+  }
   async function handleNext() {
     if (!batch) return;
     setCreatingRawTable(true);
@@ -434,8 +542,8 @@ export default function RawDataImport({ onDone }) {
       <header className="import-header">
         <div>
           <p className="eyebrow">Data Management Module</p>
-          <h1>Raw Data Import & Mapping</h1>
-          <p>Complete the Excel import first, then continue to the separate column-mapping page.</p>
+          <h1>Data Import</h1>
+          <p>Import well, daily production, and daily injection data through guided validation workflows.</p>
         </div>
         <button className="secondary-command" onClick={onDone}><ArrowLeft size={17} /> Production Dashboard</button>
       </header>
@@ -443,13 +551,19 @@ export default function RawDataImport({ onDone }) {
       <nav className="import-subtabs" aria-label="Data import sections">
         <button className={activeImportTab === "raw" ? "selected" : ""} type="button" onClick={() => { setActiveImportTab("raw"); setError(""); }}>
           <FileSpreadsheet size={17} />
-          <span><strong>Raw Data Import & Mapping</strong><small>Upload, map, and split source tables</small></span>
+          <span><strong>Well Data Import</strong><small>Upload, map, and split well source tables</small></span>
         </button>
         <button className={activeImportTab === "production" ? "selected" : ""} type="button" onClick={() => { setActiveImportTab("production"); setError(""); }}>
           <Database size={17} />
-          <span><strong>Daily Production File Import</strong><small>Map daily volumes to production tables</small></span>
+          <span><strong>Daily Production Import</strong><small>Map daily volumes to production tables</small></span>
+        </button>
+        <button className={activeImportTab === "injection" ? "selected" : ""} type="button" onClick={() => { setActiveImportTab("injection"); setError(""); }}>
+          <Database size={17} />
+          <span><strong>Daily Injection Import</strong><small>Validate and import injection volumes</small></span>
         </button>
       </nav>
+
+      {error && <div className="notice">{error}</div>}
 
       {activeImportTab === "raw" && importMetrics && (
         <section className="import-success-banner" aria-live="polite">
@@ -492,6 +606,10 @@ export default function RawDataImport({ onDone }) {
         />
       )}
 
+      {activeImportTab === "injection" && (
+        <InjectionImportTab state={injectionState} setState={setInjectionState} busy={injectionBusy} onInspect={handleInjectionInspect} onPreview={handleInjectionPreview} onComplete={handleInjectionComplete} />
+      )}
+
       {activeImportTab === "raw" && (
         <>
       <ol className="stepper">
@@ -500,8 +618,6 @@ export default function RawDataImport({ onDone }) {
         <li className={step >= 3 ? "active" : ""}><span>3</span><div><strong>Mapped Data Review</strong><small>Review rows and complete</small></div></li>
         <li className={step >= 4 ? "active" : ""}><span>4</span><div><strong>Complete</strong><small>Return to dashboard</small></div></li>
       </ol>
-
-      {error && <div className="notice">{error}</div>}
 
       {step === 1 && (
         <section className="sequential-page">
@@ -702,13 +818,3 @@ export default function RawDataImport({ onDone }) {
     </main>
   );
 }
-
-
-
-
-
-
-
-
-
-
