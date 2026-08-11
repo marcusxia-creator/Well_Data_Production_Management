@@ -4,7 +4,7 @@ import Plot from "react-plotly.js";
 
 import { fetchWellProductionDaily } from "../api/client.js";
 
-const COLORS = { oil: "#0a8062", water: "#2e7bcf", gas: "#c47a16" };
+const COLORS = { oil: "#0a8062", water: "#2e7bcf", gas: "#fa0404" };
 
 function formatNumber(value, maximumFractionDigits = 0) {
   const number = Number(value);
