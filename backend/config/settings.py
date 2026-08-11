@@ -75,6 +75,8 @@ DATABASES = {
         "PASSWORD": os.getenv("POSTGRES_PASSWORD", "wellbore"),
         "HOST": os.getenv("POSTGRES_HOST", "localhost"),
         "PORT": os.getenv("POSTGRES_PORT", "5432"),
+        "OPTIONS": {"sslmode": os.getenv("POSTGRES_SSLMODE", "prefer")},
+        "CONN_MAX_AGE": int(os.getenv("POSTGRES_CONN_MAX_AGE", "60")),
     }
 }
 
