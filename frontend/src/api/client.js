@@ -209,9 +209,9 @@ export async function uploadInjectionData(file, replaceExisting = true, mappings
     sheet_name: sheetName,
   });
 }
-export async function uploadProductionData(file, replaceExisting = true, mappings = {}) {
+export async function uploadProductionData(file, replaceConflicts = false, mappings = {}) {
   return productionFileRequest("/imports/production/upload/", file, {
-    replace_existing: replaceExisting ? "true" : "false",
+    replace_conflicts: replaceConflicts ? "true" : "false",
     mappings,
   });
 }

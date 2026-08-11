@@ -212,8 +212,8 @@ export default function Production() {
     <main className="app-shell">
       <aside className="sidebar">
         <div>
-          <p className="eyebrow">SP Petroleum</p>
-          <h1>Well Production</h1>
+          <p className="eyebrow">SAGUARO PETROLEUM LLC</p>
+          <h1>Well Management</h1>
         </div>
 
         <label className="field">
@@ -311,8 +311,8 @@ export default function Production() {
       <section className="content">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Django REST + PostGIS</p>
-            <h2>Operator Well Map</h2>
+            <p className="eyebrow">Production Module</p>
+            <h2>Well Production Map</h2>
           </div>
           <div className="status-pill">
             <Filter size={16} />

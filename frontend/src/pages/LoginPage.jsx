@@ -43,7 +43,7 @@ export default function LoginPage({ setupRequired, onAuthenticated }) {
         </div>
         <div>
           <Database size={28} />
-          <h1>Well Production Management</h1>
+          <h1>Well Inventory Management</h1>
           <p>Secure access to mapped well data, imports, and operational dashboards.</p>
         </div>
       </section>

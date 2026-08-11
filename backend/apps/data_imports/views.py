@@ -97,12 +97,12 @@ def upload_production_data(request):
     uploaded_file = request.FILES.get("file")
     if not uploaded_file:
         return Response({"detail": "Choose a production CSV or Excel file."}, status=status.HTTP_400_BAD_REQUEST)
-    replace_existing = str(request.data.get("replace_existing", "true")).casefold() not in {"false", "0", "no"}
+    replace_conflicts = str(request.data.get("replace_conflicts", "false")).casefold() in {"true", "1", "yes"}
     try:
         summary = import_production_file(
             uploaded_file,
             request.data.get("sheet_name", "").strip(),
-            replace_existing=replace_existing,
+            replace_conflicts=replace_conflicts,
             source_mapping=production_source_mapping(request),
         )
     except Exception as exc:

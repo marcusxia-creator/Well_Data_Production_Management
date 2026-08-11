@@ -38,6 +38,10 @@ PRODUCTION_COLUMN_ALIASES = {
     "daily_water": ("daily_water", "daily water", "water", "water_volume", "water volume", "water_bbl", "water bbl"),
     "daily_gas": ("daily_gas", "daily gas", "gas", "gas_volume", "gas volume", "gas_mcf", "gas mcf"),
     "fluid": ("fluid", "daily_fluid", "daily fluid", "total_fluid", "total fluid", "liquid", "liquids"),
+    "tbg_psi": ("tbg_psi", "tbg psi", "tbg", "tubing pressure", "tubing_pressure", "TP", "tp"),
+    "csg_psi": ("csg_psi", "csg psi", "csg", "casing pressure", "casing_pressure", "CP", "cp"),
+    "GOR": ("GOR", "gas oil ratio", "gas_oil_ratio"),
+    "GLR": ("GLR", "gas liquid ratio", "gas_liquid_ratio"),
 }
 WELL_HEADER_MOVED_COLUMNS = (
     "cur_operator_code", "cur_operator_name", "lahee_class_code", "lic_subs_well_obj",
@@ -505,6 +509,20 @@ def parse_decimal(value):
         return Decimal("0")
 
 
+def parse_production_decimal(value, required=True):
+    if value in (None, ""):
+        return (None, False) if required else (Decimal("0"), True)
+    if isinstance(value, (int, float, Decimal)):
+        return Decimal(str(value)), True
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return (None, False) if required else (Decimal("0"), True)
+    try:
+        return Decimal(text), True
+    except InvalidOperation:
+        return None, False
+
+
 def read_tabular_upload(uploaded_file, requested_sheet=""):
     suffix = Path(uploaded_file.name).suffix.lower()
     if suffix in {".xlsx", ".xlsm"}:
@@ -543,6 +561,14 @@ PRODUCTION_MAPPING_FIELDS = (
     {"target": "daily_water", "label": "water", "type": "double precision", "required": True, "rule": "Daily water volume"},
     {"target": "daily_gas", "label": "gas", "type": "double precision", "required": True, "rule": "Daily gas volume"},
     {"target": "fluid", "label": "fluid", "type": "double precision", "required": False, "rule": "Imported when present; otherwise oil + water"},
+    {"target": "GOR", "label": "GOR", "type": "double precision", "required": False, "rule": "Imported when present; otherwise gas / oil"},
+    {"target": "GLR", "label": "GLR", "type": "double precision", "required": False, "rule": "Imported when present; otherwise gas / fluid"},
+    {"target": "oilCut", "label": "oilCut", "type": "double precision", "required": False, "rule": "Imported when present; otherwise oil / fluid"},
+    {"target": "tbg_psi", "label": "tbg_psi", "type": "double precision", "required": False, "rule": "Tubing pressure (psi)"},
+    {"target": "csg_psi", "label": "csg_psi", "type": "double precision", "required": False, "rule": "Casing pressure (psi)"},
+    {"target": "chokeSize", "label": "choke size", "type": "double precision", "required": False, "rule": "choke size"},
+    {"target": "pumpDEPTH", "label": "pumpDEPTH", "type": "double precision", "required": False, "rule": "pumpDEPTH"},
+    {"target": "pumpDia", "label": "pumpDia", "type": "double precision", "required": False, "rule": "pumpDia"},   
 )
 
 
@@ -598,10 +624,27 @@ def ensure_production_tables(cursor):
             daily_water double precision NOT NULL DEFAULT 0,
             daily_gas double precision NOT NULL DEFAULT 0,
             fluid double precision NOT NULL DEFAULT 0,
+            GOR double precision NOT NULL DEFAULT 0,
+            GLR double precision NOT NULL DEFAULT 0,
+            oilCut double precision NOT NULL DEFAULT 0,
+            tbg_psi double precision NOT NULL DEFAULT 0,
+            csg_psi double precision NOT NULL DEFAULT 0,
+            chokeSize double precision NOT NULL DEFAULT 0,
+            pumpDEPTH double precision NOT NULL DEFAULT 0,
+            pumpDia double precision NOT NULL DEFAULT 0,
             source_file text,
             imported_at timestamptz NOT NULL DEFAULT now()
         )
         """
+    )
+    cursor.execute(
+    """
+    ALTER TABLE production_daily
+    ADD COLUMN IF NOT EXISTS tbg_psi double precision NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS csg_psi double precision NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS GOR double precision NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS GLR double precision NOT NULL DEFAULT 0
+    """
     )
     cursor.execute(
         """
@@ -618,6 +661,8 @@ def ensure_production_tables(cursor):
             monthly_water double precision NOT NULL DEFAULT 0,
             monthly_gas double precision NOT NULL DEFAULT 0,
             monthly_fluid double precision NOT NULL DEFAULT 0,
+            monthly_averageGOR double precision NOT NULL DEFAULT 0,
+            monthly_averageGWR double precision NOT NULL DEFAULT 0,
             cumulative_oil double precision NOT NULL DEFAULT 0,
             cumulative_water double precision NOT NULL DEFAULT 0,
             cumulative_gas double precision NOT NULL DEFAULT 0,
@@ -642,6 +687,10 @@ def serialize_production_row(row):
         "daily_water": float(row["daily_water"]),
         "daily_gas": float(row["daily_gas"]),
         "fluid": float(row["fluid"]),
+        "tbg_psi": float(row["tbg_psi"]),
+        "csg_psi": float(row["csg_psi"]),
+        "GOR": float(row["GOR"]),
+        "GLR": float(row["GLR"]),
     }
 
 
@@ -666,20 +715,48 @@ def build_production_rows(headers, source_rows, source_mapping=None, require_all
         if not base_uwi or not production_date:
             skipped_rows += 1
             continue
-        daily_oil = parse_decimal(production_source_value(values, column_map, "daily_oil"))
-        daily_water = parse_decimal(production_source_value(values, column_map, "daily_water"))
-        daily_gas = parse_decimal(production_source_value(values, column_map, "daily_gas"))
-        if "fluid" in column_map:
-            fluid = parse_decimal(production_source_value(values, column_map, "fluid"))
+        daily_oil, oil_valid = parse_production_decimal(production_source_value(values, column_map, "daily_oil"))
+        daily_water, water_valid = parse_production_decimal(production_source_value(values, column_map, "daily_water"))
+        daily_gas, gas_valid = parse_production_decimal(production_source_value(values, column_map, "daily_gas"))
+        fluid_source = production_source_value(values, column_map, "fluid")
+        if "fluid" in column_map and fluid_source not in (None, ""):
+            fluid, fluid_valid = parse_production_decimal(fluid_source)
         else:
+            fluid_valid = True
             fluid = daily_oil + daily_water
+        if not (oil_valid and water_valid and gas_valid and fluid_valid):
+            skipped_rows += 1
+            continue
+
+        optional = {}
+        optional_valid = True
+        for target in ("tbg_psi", "csg_psi"):
+            value, valid = parse_production_decimal(
+                production_source_value(values, column_map, target), required=False
+            )
+            optional[target] = value
+            optional_valid = optional_valid and valid
+
+        ratio_defaults = {
+            "GOR": daily_gas / daily_oil if daily_oil else Decimal("0"),
+            "GLR": daily_gas / fluid if fluid else Decimal("0"),
+        }
+        for target, calculated_value in ratio_defaults.items():
+            source_value = production_source_value(values, column_map, target)
+            if target in column_map and source_value not in (None, ""):
+                value, valid = parse_production_decimal(source_value)
+                optional[target] = value
+                optional_valid = optional_valid and valid
+            else:
+                optional[target] = calculated_value
+
+        if not optional_valid:
+            skipped_rows += 1
+            continue
         parsed_rows.append({
-            "base_uwi": base_uwi,
-            "production_date": production_date,
-            "daily_oil": daily_oil,
-            "daily_water": daily_water,
-            "daily_gas": daily_gas,
-            "fluid": fluid,
+            "base_uwi": base_uwi, "production_date": production_date,
+            "daily_oil": daily_oil, "daily_water": daily_water,
+            "daily_gas": daily_gas, "fluid": fluid, **optional,
         })
         if limit and len(parsed_rows) >= limit:
             break
@@ -703,112 +780,130 @@ def inspect_production_file(uploaded_file, requested_sheet=""):
     }
 
 
+def classify_production_rows(cursor, parsed_rows, mapped_fields):
+    ensure_production_tables(cursor)
+    wells = sorted({row["base_uwi"] for row in parsed_rows})
+    dates = sorted({row["production_date"] for row in parsed_rows})
+    existing = {}
+    if wells and dates:
+        cursor.execute(
+            """SELECT base_uwi, production_date, daily_oil, daily_water, daily_gas, fluid,
+                      tbg_psi, csg_psi, GOR, GLR
+               FROM production_daily WHERE base_uwi = ANY(%s) AND production_date = ANY(%s)""",
+            [wells, dates],
+        )
+        columns = ("base_uwi", "production_date", "daily_oil", "daily_water", "daily_gas", "fluid",
+                   "tbg_psi", "csg_psi", "GOR", "GLR")
+        existing = {(record[0], record[1]): dict(zip(columns, record)) for record in cursor.fetchall()}
+    new_rows, duplicate_rows, conflicts = [], [], []
+    compared_fields = [field for field in mapped_fields if field not in {"base_uwi", "production_date"}]
+    for uploaded in parsed_rows:
+        stored = existing.get((uploaded["base_uwi"], uploaded["production_date"]))
+        if stored is None:
+            new_rows.append(uploaded)
+            continue
+        differences = [field for field in compared_fields if Decimal(str(stored[field])) != uploaded[field]]
+        if not differences:
+            duplicate_rows.append(uploaded)
+        else:
+            conflicts.append({
+                "different_fields": differences,
+                "existing": serialize_production_row(stored),
+                "uploaded": serialize_production_row(uploaded),
+            })
+    return new_rows, duplicate_rows, conflicts
+
+
 def preview_production_file(uploaded_file, source_mapping, requested_sheet=""):
     headers, source_rows, sheet_name = read_tabular_upload(uploaded_file, requested_sheet)
-    parsed_rows, skipped_rows, column_map = build_production_rows(headers, source_rows, source_mapping, limit=20)
-    if not parsed_rows:
-        raise ValueError("No valid production rows were found. Check well id and date mappings.")
+    parsed_rows, invalid_count, column_map = build_production_rows(headers, source_rows, source_mapping)
+    with connection.cursor() as cursor:
+        new_rows, duplicates, conflicts = classify_production_rows(cursor, parsed_rows, column_map)
     return {
-        "file_name": uploaded_file.name,
-        "sheet_name": sheet_name,
-        "daily_table_name": PRODUCTION_DAILY_TABLE,
-        "monthly_table_name": PRODUCTION_MONTHLY_TABLE,
-        "skipped_row_count": skipped_rows,
+        "file_name": uploaded_file.name, "sheet_name": sheet_name,
+        "daily_table_name": PRODUCTION_DAILY_TABLE, "monthly_table_name": PRODUCTION_MONTHLY_TABLE,
+        "new_row_count": len(new_rows), "duplicate_row_count": len(duplicates),
+        "conflict_row_count": len(conflicts), "invalid_row_count": invalid_count,
+        "only_duplicates": bool(duplicates) and not new_rows and not conflicts and not invalid_count,
         "mapped_columns": {target: headers[index] for target, index in column_map.items()},
-        "preview": [serialize_production_row(row) for row in parsed_rows],
+        "preview": [serialize_production_row(row) for row in new_rows[:20]],
+        "conflicts": conflicts[:100],
     }
 
 
 @transaction.atomic
-def import_production_file(uploaded_file, requested_sheet="", replace_existing=True, source_mapping=None):
+def import_production_file(uploaded_file, requested_sheet="", replace_conflicts=False, source_mapping=None):
     headers, source_rows, sheet_name = read_tabular_upload(uploaded_file, requested_sheet)
-    parsed_rows, skipped_rows, column_map = build_production_rows(headers, source_rows, source_mapping)
-
-    if not parsed_rows:
-        raise ValueError("No valid production rows were found. Check well id and date mappings.")
-
-    imported_base_uwis = sorted({row["base_uwi"] for row in parsed_rows})
+    parsed_rows, invalid_count, column_map = build_production_rows(headers, source_rows, source_mapping)
     imported_at = timezone.now()
     with connection.cursor() as cursor:
-        ensure_production_tables(cursor)
-        if replace_existing:
-            cursor.execute(sql.SQL("TRUNCATE TABLE {}, {}").format(
-                sql.Identifier(PRODUCTION_DAILY_TABLE),
-                sql.Identifier(PRODUCTION_MONTHLY_TABLE),
-            ))
-
+        new_rows, duplicates, conflicts = classify_production_rows(cursor, parsed_rows, column_map)
+        if duplicates and not new_rows and not conflicts and not invalid_count:
+            raise ValueError("Every valid uploaded record is an exact duplicate; there is no new data to add.")
+        replacement_rows = []
+        if replace_conflicts:
+            for item in conflicts:
+                row = item["uploaded"]
+                replacement_rows.append({
+                    "base_uwi": row["base_uwi"], "production_date": parse_production_date(row["production_date"]),
+                    "daily_oil": Decimal(str(row["daily_oil"])), "daily_water": Decimal(str(row["daily_water"])),
+                    "daily_gas": Decimal(str(row["daily_gas"])), "fluid": Decimal(str(row["fluid"])),
+                    "tbg_psi": Decimal(str(row["tbg_psi"])), "csg_psi": Decimal(str(row["csg_psi"])),
+                    "GOR": Decimal(str(row["GOR"])), "GLR": Decimal(str(row["GLR"])),
+                })
+        approved_rows = new_rows + replacement_rows
+        imported_base_uwis = sorted({row["base_uwi"] for row in approved_rows})
         insert_daily = """
             INSERT INTO production_daily
-                (base_uwi, production_date, daily_oil, daily_water, daily_gas, fluid, source_file, imported_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (base_uwi, production_date, daily_oil, daily_water, daily_gas, fluid, tbg_psi, csg_psi, GOR, GLR, source_file, imported_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (base_uwi, production_date) DO UPDATE SET
-                daily_oil = EXCLUDED.daily_oil,
-                daily_water = EXCLUDED.daily_water,
-                daily_gas = EXCLUDED.daily_gas,
-                fluid = EXCLUDED.fluid,
-                source_file = EXCLUDED.source_file,
-                imported_at = EXCLUDED.imported_at
+                daily_oil=EXCLUDED.daily_oil, daily_water=EXCLUDED.daily_water,
+                daily_gas=EXCLUDED.daily_gas, fluid=EXCLUDED.fluid,
+                tbg_psi=EXCLUDED.tbg_psi, csg_psi=EXCLUDED.csg_psi, GOR=EXCLUDED.GOR, GLR=EXCLUDED.GLR,
+                source_file=EXCLUDED.source_file, imported_at=EXCLUDED.imported_at
         """
-        cursor.executemany(insert_daily, [
-            [
-                row["base_uwi"], row["production_date"], row["daily_oil"], row["daily_water"],
-                row["daily_gas"], row["fluid"], uploaded_file.name, imported_at,
-            ]
-            for row in parsed_rows
-        ])
-        cursor.execute("DELETE FROM production_monthly WHERE base_uwi = ANY(%s)", [imported_base_uwis])
-        cursor.execute(
-            """
-            INSERT INTO production_monthly (
-                base_uwi, production_month, monthly_oil, monthly_water, monthly_gas, monthly_fluid,
-                cumulative_oil, cumulative_water, cumulative_gas, cumulative_fluid, updated_at
-            )
-            WITH monthly AS (
-                SELECT
-                    base_uwi,
-                    date_trunc('month', production_date)::date AS production_month,
-                    SUM(daily_oil) AS monthly_oil,
-                    SUM(daily_water) AS monthly_water,
-                    SUM(daily_gas) AS monthly_gas,
-                    SUM(fluid) AS monthly_fluid
-                FROM production_daily
-                WHERE base_uwi = ANY(%s)
-                GROUP BY base_uwi, date_trunc('month', production_date)::date
-            )
-            SELECT
-                base_uwi,
-                production_month,
-                monthly_oil,
-                monthly_water,
-                monthly_gas,
-                monthly_fluid,
-                SUM(monthly_oil) OVER (PARTITION BY base_uwi ORDER BY production_month) AS cumulative_oil,
-                SUM(monthly_water) OVER (PARTITION BY base_uwi ORDER BY production_month) AS cumulative_water,
-                SUM(monthly_gas) OVER (PARTITION BY base_uwi ORDER BY production_month) AS cumulative_gas,
-                SUM(monthly_fluid) OVER (PARTITION BY base_uwi ORDER BY production_month) AS cumulative_fluid,
-                now()
-            FROM monthly
-            ORDER BY base_uwi, production_month
-            """,
-            [imported_base_uwis],
-        )
-        cursor.execute("SELECT COUNT(*) FROM production_monthly WHERE base_uwi = ANY(%s)", [imported_base_uwis])
-        monthly_row_count = cursor.fetchone()[0]
-
+        cursor.executemany(insert_daily, [[
+            row["base_uwi"], row["production_date"], row["daily_oil"], row["daily_water"],
+            row["daily_gas"], row["fluid"], row["tbg_psi"], row["csg_psi"], row["GOR"], row["GLR"],
+            uploaded_file.name, imported_at
+        ] for row in approved_rows])
+        monthly_row_count = 0
+        if imported_base_uwis:
+            cursor.execute("DELETE FROM production_monthly WHERE base_uwi = ANY(%s)", [imported_base_uwis])
+            cursor.execute(
+                """
+                INSERT INTO production_monthly (
+                    base_uwi, production_month, monthly_oil, monthly_water, monthly_gas, monthly_fluid,
+                    cumulative_oil, cumulative_water, cumulative_gas, cumulative_fluid, updated_at
+                )
+                WITH monthly AS (
+                    SELECT base_uwi, date_trunc('month', production_date)::date production_month,
+                           SUM(daily_oil) monthly_oil, SUM(daily_water) monthly_water,
+                           SUM(daily_gas) monthly_gas, SUM(fluid) monthly_fluid
+                    FROM production_daily WHERE base_uwi = ANY(%s)
+                    GROUP BY base_uwi, date_trunc('month', production_date)::date
+                )
+                SELECT base_uwi, production_month, monthly_oil, monthly_water, monthly_gas, monthly_fluid,
+                       SUM(monthly_oil) OVER (PARTITION BY base_uwi ORDER BY production_month),
+                       SUM(monthly_water) OVER (PARTITION BY base_uwi ORDER BY production_month),
+                       SUM(monthly_gas) OVER (PARTITION BY base_uwi ORDER BY production_month),
+                       SUM(monthly_fluid) OVER (PARTITION BY base_uwi ORDER BY production_month), now()
+                FROM monthly ORDER BY base_uwi, production_month
+                """, [imported_base_uwis])
+            cursor.execute("SELECT COUNT(*) FROM production_monthly WHERE base_uwi = ANY(%s)", [imported_base_uwis])
+            monthly_row_count = cursor.fetchone()[0]
     return {
-        "file_name": uploaded_file.name,
-        "sheet_name": sheet_name,
-        "daily_table_name": PRODUCTION_DAILY_TABLE,
-        "monthly_table_name": PRODUCTION_MONTHLY_TABLE,
-        "daily_row_count": len(parsed_rows),
-        "monthly_row_count": monthly_row_count,
-        "skipped_row_count": skipped_rows,
-        "well_count": len(imported_base_uwis),
-        "replace_existing": replace_existing,
+        "file_name": uploaded_file.name, "sheet_name": sheet_name,
+        "daily_table_name": PRODUCTION_DAILY_TABLE, "monthly_table_name": PRODUCTION_MONTHLY_TABLE,
+        "daily_row_count": len(approved_rows), "monthly_row_count": monthly_row_count,
+        "inserted_row_count": len(new_rows), "replaced_row_count": len(replacement_rows),
+        "skipped_row_count": len(duplicates) + (0 if replace_conflicts else len(conflicts)),
+        "rejected_row_count": invalid_count, "well_count": len(imported_base_uwis),
+        "replace_conflicts": replace_conflicts,
         "mapped_columns": {target: headers[index] for target, index in column_map.items()},
-        "preview": [serialize_production_row(row) for row in parsed_rows[:20]],
+        "preview": [serialize_production_row(row) for row in approved_rows[:20]],
     }
-
 INJECTION_REQUIRED_FIELDS = ("base_uwi", "injection_date")
 INJECTION_MAPPING_FIELDS = (
     {"target": "base_uwi", "label": "base_uwi", "type": "text", "required": True, "rule": "Well ID common key"},

@@ -148,13 +148,13 @@ function ProductionImportTab({
         <section className="sequential-page mapped-review-workspace">
           <section className="mapped-review-section">
             <div className="mapping-toolbar"><div><h2>Step 3: Review mapped production data</h2><p>Review transformed daily rows before writing production tables.</p></div></div>
-            <div className="mapped-header-list production-mapping-list">{Object.entries(productionPreview.mapped_columns).map(([target, source]) => <span key={target}><small>{target}</small>{source}</span>)}</div>
-            <ProductionPreviewTable rows={productionPreview.preview} />
+            <div className="mapped-header-list production-mapping-list">{Object.entries(productionPreview.mapped_columns).map(([target, source]) => <span key={target}><small>{target}</small>{source}</span>)}</div><div className="batch-summary"><div><span>New</span><strong>{productionPreview.new_row_count.toLocaleString()}</strong></div><div><span>Exact duplicates</span><strong>{productionPreview.duplicate_row_count.toLocaleString()}</strong></div><div><span>Conflicts</span><strong>{productionPreview.conflict_row_count.toLocaleString()}</strong></div><div><span>Invalid</span><strong>{productionPreview.invalid_row_count.toLocaleString()}</strong></div></div>{productionPreview.only_duplicates && <div className="process-result validation-errors"><strong>No new data to add.</strong> Every valid uploaded record is already in the database.</div>}
+            <ProductionPreviewTable rows={productionPreview.preview} />{!!productionPreview.conflicts?.length && <section className="process-result validation-errors"><div><h3>Conflicting records</h3><p>Choose whether uploaded values may replace the existing records.</p></div><div className="mapped-preview-wrap"><table><thead><tr><th>Well</th><th>Date</th><th>Different fields</th><th>Existing</th><th>Uploaded</th></tr></thead><tbody>{productionPreview.conflicts.map((item, index) => <tr key={index}><td>{item.uploaded.base_uwi}</td><td>{item.uploaded.production_date}</td><td>{item.different_fields.join(", ")}</td><td>{item.different_fields.map((field) => field + ": " + item.existing[field]).join("; ")}</td><td>{item.different_fields.map((field) => field + ": " + item.uploaded[field]).join("; ")}</td></tr>)}</tbody></table></div></section>}
           </section>
           <footer className="sequential-page-actions mapping-complete-actions">
             <button className="secondary-command" disabled={productionBusy} onClick={() => setProductionStep(2)}><ArrowLeft size={17} /> Back to Column Mapping</button>
-            <label><input type="checkbox" checked={productionReplaceExisting} onChange={(event) => setProductionReplaceExisting(event.target.checked)} /> Replace existing production data</label>
-            <button className="primary-command" disabled={productionBusy} onClick={handleProductionComplete}>{productionBusy ? "Completing import..." : "Complete Process"}<Check size={17} /></button>
+            <label><input type="checkbox" checked={productionReplaceExisting} onChange={(event) => setProductionReplaceExisting(event.target.checked)} /> Replace conflicting records with uploaded values (explicit confirmation)</label>
+            <button className="primary-command" disabled={productionBusy || productionPreview.only_duplicates || (!productionPreview.new_row_count && !productionPreview.conflict_row_count)} onClick={handleProductionComplete}>{productionBusy ? "Completing import..." : "Complete Process"}<Check size={17} /></button>
           </footer>
         </section>
       )}
@@ -166,11 +166,11 @@ function ProductionImportTab({
           <p>Daily production rows were imported and monthly cumulative production was generated.</p>
           <div className="result-grid">
             <div><span>Daily table</span><strong>{productionSummary.daily_table_name}</strong></div>
-            <div><span>Daily rows</span><strong>{productionSummary.daily_row_count.toLocaleString()}</strong></div>
+            <div><span>Inserted</span><strong>{productionSummary.inserted_row_count.toLocaleString()}</strong></div><div><span>Replaced</span><strong>{productionSummary.replaced_row_count.toLocaleString()}</strong></div>
             <div><span>Monthly table</span><strong>{productionSummary.monthly_table_name}</strong></div>
             <div><span>Monthly rows</span><strong>{productionSummary.monthly_row_count.toLocaleString()}</strong></div>
             <div><span>Wells</span><strong>{productionSummary.well_count.toLocaleString()}</strong></div>
-            <div><span>Skipped rows</span><strong>{productionSummary.skipped_row_count.toLocaleString()}</strong></div>
+            <div><span>Skipped</span><strong>{productionSummary.skipped_row_count.toLocaleString()}</strong></div><div><span>Rejected</span><strong>{productionSummary.rejected_row_count.toLocaleString()}</strong></div>
           </div>
           <ProductionPreviewTable rows={productionSummary.preview} />
         </section>
@@ -276,7 +276,7 @@ export default function RawDataImport({ onDone }) {
   const [templateBusy, setTemplateBusy] = useState(false);
   const [templateMessage, setTemplateMessage] = useState("");
   const [productionFile, setProductionFile] = useState(null);
-  const [productionReplaceExisting, setProductionReplaceExisting] = useState(true);
+  const [productionReplaceExisting, setProductionReplaceExisting] = useState(false);
   const [productionStep, setProductionStep] = useState(1);
   const [productionInspect, setProductionInspect] = useState(null);
   const [productionMappings, setProductionMappings] = useState({});
