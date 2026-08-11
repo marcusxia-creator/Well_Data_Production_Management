@@ -194,7 +194,7 @@ function InjectionPreviewTable({ rows = [] }) {
 }
 
 function InjectionImportTab({ state, setState, busy, onInspect, onPreview, onComplete }) {
-  const { file, step, inspect, mappings, preview, summary, replaceExisting, sheetName } = state;
+  const { file, step, inspect, mappings, preview, summary, replaceConflicts, sheetName } = state;
   const required = (inspect?.fields || []).filter((field) => field.required);
   const unresolved = required.filter((field) => !mappings[field.target]).length;
   const set = (changes) => setState((current) => ({ ...current, ...changes }));
@@ -247,10 +247,10 @@ function InjectionImportTab({ state, setState, busy, onInspect, onPreview, onCom
           <InjectionPreviewTable rows={preview.preview} />
           {!!preview.validation_errors?.length && <section className="process-result validation-errors"><div><h3>Validation errors</h3><p>First {preview.validation_errors.length} invalid rows</p></div><div className="mapped-preview-wrap"><table><thead><tr><th>Source row</th><th>Well</th><th>Errors</th></tr></thead><tbody>{preview.validation_errors.map((item) => <tr key={item.row_number}><td>{item.row_number}</td><td>{item.base_uwi || "-"}</td><td>{item.errors.join("; ")}</td></tr>)}</tbody></table></div></section>}
         </section>
-        <footer className="sequential-page-actions mapping-complete-actions"><button className="secondary-command" disabled={busy} onClick={() => set({ step: 2 })}><ArrowLeft size={17} /> Back to Mapping</button><label><input type="checkbox" checked={replaceExisting} onChange={(event) => set({ replaceExisting: event.target.checked })} /> Replace existing injection data</label><button className="primary-command" disabled={busy || !preview.valid_row_count} onClick={onComplete}>{busy ? "Importing..." : "Import Valid Records"}<Check size={17} /></button></footer>
+        <footer className="sequential-page-actions mapping-complete-actions"><button className="secondary-command" disabled={busy} onClick={() => set({ step: 2 })}><ArrowLeft size={17} /> Back to Mapping</button><label><input type="checkbox" checked={replaceConflicts} onChange={(event) => set({ replaceConflicts: event.target.checked })} /> Replace conflicting records with uploaded values (explicit confirmation)</label><button className="primary-command" disabled={busy || !preview.valid_row_count} onClick={onComplete}>{busy ? "Importing..." : "Import Valid Records"}<Check size={17} /></button></footer>
       </section>}
 
-      {step === 4 && summary && <section className="sequential-page completion-workspace import-complete-page"><div className="completion-icon"><Check size={28} /></div><h2>Injection import is complete</h2><p>Valid daily injection rows were imported and monthly cumulative injection was generated.</p><div className="result-grid"><div><span>Daily table</span><strong>{summary.daily_table_name}</strong></div><div><span>Daily rows</span><strong>{summary.daily_row_count.toLocaleString()}</strong></div><div><span>Monthly table</span><strong>{summary.monthly_table_name}</strong></div><div><span>Monthly rows</span><strong>{summary.monthly_row_count.toLocaleString()}</strong></div><div><span>Wells</span><strong>{summary.well_count.toLocaleString()}</strong></div><div><span>Invalid rows skipped</span><strong>{summary.invalid_row_count.toLocaleString()}</strong></div></div><InjectionPreviewTable rows={summary.preview} /></section>}
+      {step === 4 && summary && <section className="sequential-page completion-workspace import-complete-page"><div className="completion-icon"><Check size={28} /></div><h2>Injection import is complete</h2><p>Valid daily injection rows were imported and monthly cumulative injection was generated.</p><div className="result-grid"><div><span>Daily table</span><strong>{summary.daily_table_name}</strong></div><div><span>Inserted</span><strong>{summary.inserted_row_count.toLocaleString()}</strong></div><div><span>Replaced</span><strong>{summary.replaced_row_count.toLocaleString()}</strong></div><div><span>Monthly table</span><strong>{summary.monthly_table_name}</strong></div><div><span>Monthly rows</span><strong>{summary.monthly_row_count.toLocaleString()}</strong></div><div><span>Wells</span><strong>{summary.well_count.toLocaleString()}</strong></div><div><span>Skipped</span><strong>{summary.skipped_row_count.toLocaleString()}</strong></div><div><span>Invalid rows</span><strong>{summary.invalid_row_count.toLocaleString()}</strong></div></div><InjectionPreviewTable rows={summary.preview} /></section>}
     </>
   );
 }
@@ -286,7 +286,7 @@ export default function RawDataImport({ onDone }) {
   const [injectionBusy, setInjectionBusy] = useState(false);
   const [injectionState, setInjectionState] = useState({
     file: null, step: 1, inspect: null, mappings: {}, preview: null, summary: null,
-    replaceExisting: true, sheetName: "",
+    replaceConflicts: false, sheetName: "",
   });
 
   useEffect(() => {
@@ -428,7 +428,7 @@ export default function RawDataImport({ onDone }) {
   async function handleInjectionComplete() {
     setInjectionBusy(true); setError("");
     try {
-      const summary = await uploadInjectionData(injectionState.file, injectionState.replaceExisting, injectionState.mappings, injectionState.sheetName);
+      const summary = await uploadInjectionData(injectionState.file, injectionState.replaceConflicts, injectionState.mappings, injectionState.sheetName);
       setInjectionState((current) => ({ ...current, summary, step: 4 }));
     } catch (uploadError) { setError(uploadError.message); }
     finally { setInjectionBusy(false); }

@@ -1009,6 +1009,38 @@ def serialize_injection_row(row):
     }
 
 
+def classify_injection_rows(cursor, parsed_rows, mapped_fields):
+    ensure_injection_tables(cursor)
+    wells = sorted({row["base_uwi"] for row in parsed_rows})
+    dates = sorted({row["injection_date"] for row in parsed_rows})
+    existing = {}
+    if wells and dates:
+        cursor.execute(
+            """SELECT base_uwi, injection_date, daily_water, daily_gas, daily_steam, injection_pressure
+               FROM injection_daily WHERE base_uwi = ANY(%s) AND injection_date = ANY(%s)""",
+            [wells, dates],
+        )
+        columns = ("base_uwi", "injection_date", "daily_water", "daily_gas", "daily_steam", "injection_pressure")
+        existing = {(record[0], record[1]): dict(zip(columns, record)) for record in cursor.fetchall()}
+    new_rows, duplicate_rows, conflicts = [], [], []
+    compared_fields = [field for field in mapped_fields if field not in {"base_uwi", "injection_date"}]
+    for uploaded in parsed_rows:
+        stored = existing.get((uploaded["base_uwi"], uploaded["injection_date"]))
+        if stored is None:
+            new_rows.append(uploaded)
+            continue
+        differences = [field for field in compared_fields if Decimal(str(stored[field])) != uploaded[field]]
+        if not differences:
+            duplicate_rows.append(uploaded)
+        else:
+            conflicts.append({
+                "different_fields": differences,
+                "existing": serialize_injection_row(stored),
+                "uploaded": serialize_injection_row(uploaded),
+            })
+    return new_rows, duplicate_rows, conflicts
+
+
 def inspect_injection_file(uploaded_file, requested_sheet=""):
     headers, source_rows, sheet_name = read_tabular_upload(uploaded_file, requested_sheet)
     sheet_names = [sheet_name]
@@ -1061,17 +1093,27 @@ def ensure_injection_tables(cursor):
 
 
 @transaction.atomic
-def import_injection_file(uploaded_file, requested_sheet="", replace_existing=True, source_mapping=None):
+def import_injection_file(uploaded_file, requested_sheet="", replace_conflicts=False, source_mapping=None):
     headers, source_rows, sheet_name = read_tabular_upload(uploaded_file, requested_sheet)
-    rows, errors, column_map = build_injection_rows(headers, source_rows, source_mapping)
-    if not rows:
+    parsed_rows, errors, column_map = build_injection_rows(headers, source_rows, source_mapping)
+    if not parsed_rows:
         raise ValueError("No valid injection rows were found. Review the file and mappings.")
-    base_uwis = sorted({row["base_uwi"] for row in rows})
     imported_at = timezone.now()
     with connection.cursor() as cursor:
-        ensure_injection_tables(cursor)
-        if replace_existing:
-            cursor.execute("TRUNCATE TABLE injection_daily, injection_monthly")
+        new_rows, duplicates, conflicts = classify_injection_rows(cursor, parsed_rows, column_map)
+        if duplicates and not new_rows and not conflicts and not errors:
+            raise ValueError("Every valid uploaded record is an exact duplicate; there is no new data to add.")
+        replacement_rows = []
+        if replace_conflicts:
+            for item in conflicts:
+                row = item["uploaded"]
+                replacement_rows.append({
+                    "base_uwi": row["base_uwi"], "injection_date": parse_production_date(row["injection_date"]),
+                    "daily_water": Decimal(str(row["daily_water"])), "daily_gas": Decimal(str(row["daily_gas"])),
+                    "daily_steam": Decimal(str(row["daily_steam"])), "injection_pressure": Decimal(str(row["injection_pressure"])),
+                })
+        approved_rows = new_rows + replacement_rows
+        base_uwis = sorted({row["base_uwi"] for row in approved_rows})
         cursor.executemany("""
             INSERT INTO injection_daily
                 (base_uwi, injection_date, daily_water, daily_gas, daily_steam, injection_pressure, source_file, imported_at)
@@ -1080,35 +1122,39 @@ def import_injection_file(uploaded_file, requested_sheet="", replace_existing=Tr
                 daily_water=EXCLUDED.daily_water, daily_gas=EXCLUDED.daily_gas,
                 daily_steam=EXCLUDED.daily_steam, injection_pressure=EXCLUDED.injection_pressure,
                 source_file=EXCLUDED.source_file, imported_at=EXCLUDED.imported_at
-        """, [[row["base_uwi"], row["injection_date"], row["daily_water"], row["daily_gas"], row["daily_steam"], row["injection_pressure"], uploaded_file.name, imported_at] for row in rows])
-        cursor.execute("DELETE FROM injection_monthly WHERE base_uwi = ANY(%s)", [base_uwis])
-        cursor.execute("""
-            INSERT INTO injection_monthly (
-                base_uwi, injection_month, monthly_water, monthly_gas, monthly_steam,
-                cumulative_water, cumulative_gas, cumulative_steam, updated_at
-            )
-            WITH monthly AS (
-                SELECT base_uwi, date_trunc('month', injection_date)::date injection_month,
-                       SUM(daily_water) monthly_water, SUM(daily_gas) monthly_gas, SUM(daily_steam) monthly_steam
-                FROM injection_daily WHERE base_uwi = ANY(%s)
-                GROUP BY base_uwi, date_trunc('month', injection_date)::date
-            )
-            SELECT base_uwi, injection_month, monthly_water, monthly_gas, monthly_steam,
-                   SUM(monthly_water) OVER (PARTITION BY base_uwi ORDER BY injection_month),
-                   SUM(monthly_gas) OVER (PARTITION BY base_uwi ORDER BY injection_month),
-                   SUM(monthly_steam) OVER (PARTITION BY base_uwi ORDER BY injection_month), now()
-            FROM monthly
-        """, [base_uwis])
-        cursor.execute("SELECT COUNT(*) FROM injection_monthly WHERE base_uwi = ANY(%s)", [base_uwis])
-        monthly_count = cursor.fetchone()[0]
+        """, [[row["base_uwi"], row["injection_date"], row["daily_water"], row["daily_gas"], row["daily_steam"], row["injection_pressure"], uploaded_file.name, imported_at] for row in approved_rows])
+        monthly_count = 0
+        if base_uwis:
+            cursor.execute("DELETE FROM injection_monthly WHERE base_uwi = ANY(%s)", [base_uwis])
+            cursor.execute("""
+                INSERT INTO injection_monthly (
+                    base_uwi, injection_month, monthly_water, monthly_gas, monthly_steam,
+                    cumulative_water, cumulative_gas, cumulative_steam, updated_at
+                )
+                WITH monthly AS (
+                    SELECT base_uwi, date_trunc('month', injection_date)::date injection_month,
+                           SUM(daily_water) monthly_water, SUM(daily_gas) monthly_gas, SUM(daily_steam) monthly_steam
+                    FROM injection_daily WHERE base_uwi = ANY(%s)
+                    GROUP BY base_uwi, date_trunc('month', injection_date)::date
+                )
+                SELECT base_uwi, injection_month, monthly_water, monthly_gas, monthly_steam,
+                       SUM(monthly_water) OVER (PARTITION BY base_uwi ORDER BY injection_month),
+                       SUM(monthly_gas) OVER (PARTITION BY base_uwi ORDER BY injection_month),
+                       SUM(monthly_steam) OVER (PARTITION BY base_uwi ORDER BY injection_month), now()
+                FROM monthly
+            """, [base_uwis])
+            cursor.execute("SELECT COUNT(*) FROM injection_monthly WHERE base_uwi = ANY(%s)", [base_uwis])
+            monthly_count = cursor.fetchone()[0]
     return {
         "file_name": uploaded_file.name, "sheet_name": sheet_name,
         "daily_table_name": INJECTION_DAILY_TABLE, "monthly_table_name": INJECTION_MONTHLY_TABLE,
-        "daily_row_count": len(rows), "monthly_row_count": monthly_count, "well_count": len(base_uwis),
-        "valid_row_count": len(rows), "invalid_row_count": len(errors), "validation_errors": errors[:50],
-        "replace_existing": replace_existing,
+        "daily_row_count": len(approved_rows), "monthly_row_count": monthly_count,
+        "inserted_row_count": len(new_rows), "replaced_row_count": len(replacement_rows),
+        "skipped_row_count": len(duplicates) + (0 if replace_conflicts else len(conflicts)),
+        "valid_row_count": len(parsed_rows), "invalid_row_count": len(errors), "validation_errors": errors[:50],
+        "well_count": len(base_uwis), "replace_conflicts": replace_conflicts,
         "mapped_columns": {target: headers[index] for target, index in column_map.items()},
-        "preview": [serialize_injection_row(row) for row in rows[:20]],
+        "preview": [serialize_injection_row(row) for row in approved_rows[:20]],
     }
 
 def mapping_value(raw_row, mapping, fallback_raw_id=None, source_file="", imported_at=None):
@@ -1169,17 +1215,25 @@ def insert_rows(cursor, table_name, rows):
     return len(rows)
 
 
-def insert_unique_well_headers(cursor, rows):
+def upsert_rows_by_base_uwi(cursor, table_name, rows):
+    """Insert rows, first clearing any prior rows for the same wells.
+
+    Re-importing a well replaces its rows in this table without disturbing
+    rows belonging to other wells, so append imports don't need a full
+    TRUNCATE to avoid duplicate accumulation on repeat uploads.
+    """
     if not rows:
         return 0
-    base_uwis = [row["base_uwi"] for row in rows]
-    cursor.execute(
-        sql.SQL("DELETE FROM {} WHERE {} = ANY(%s)").format(
-            sql.Identifier("well_header"), sql.Identifier("base_uwi")
-        ),
-        [base_uwis],
-    )
-    return insert_rows(cursor, "well_header", rows)
+    if "base_uwi" in rows[0]:
+        base_uwis = sorted({row["base_uwi"] for row in rows if row.get("base_uwi")})
+        if base_uwis:
+            cursor.execute(
+                sql.SQL("DELETE FROM {} WHERE {} = ANY(%s)").format(
+                    sql.Identifier(table_name), sql.Identifier("base_uwi")
+                ),
+                [base_uwis],
+            )
+    return insert_rows(cursor, table_name, rows)
 
 
 def build_output_groups(mappings):
@@ -1346,7 +1400,7 @@ def split_batch(batch, replace_existing=True):
             if table_name != "well_header":
                 summary[table_name] = summary.get(table_name, 0) + insert_rows(cursor, table_name, rows)
         if "well_header" in tables:
-            summary["well_header"] = insert_unique_well_headers(cursor, list(unique_well_headers.values()))
+            summary["well_header"] = upsert_rows_by_base_uwi(cursor, "well_header", list(unique_well_headers.values()))
 
     batch.status = RawImportBatch.STATUS_COMPLETED
     batch.completed_at = timezone.now()

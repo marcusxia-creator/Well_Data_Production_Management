@@ -202,9 +202,9 @@ export async function previewInjectionData(file, mappings, sheetName = "") {
   return productionFileRequest("/imports/injection/preview/", file, { mappings, sheet_name: sheetName });
 }
 
-export async function uploadInjectionData(file, replaceExisting = true, mappings = {}, sheetName = "") {
+export async function uploadInjectionData(file, replaceConflicts = false, mappings = {}, sheetName = "") {
   return productionFileRequest("/imports/injection/upload/", file, {
-    replace_existing: replaceExisting ? "true" : "false",
+    replace_conflicts: replaceConflicts ? "true" : "false",
     mappings,
     sheet_name: sheetName,
   });
