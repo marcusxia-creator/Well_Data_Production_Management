@@ -721,9 +721,12 @@ def build_production_rows(headers, source_rows, source_mapping=None, require_all
         fluid_source = production_source_value(values, column_map, "fluid")
         if "fluid" in column_map and fluid_source not in (None, ""):
             fluid, fluid_valid = parse_production_decimal(fluid_source)
-        else:
+        elif oil_valid and water_valid:
             fluid_valid = True
             fluid = daily_oil + daily_water
+        else:
+            fluid_valid = False
+            fluid = None
         if not (oil_valid and water_valid and gas_valid and fluid_valid):
             skipped_rows += 1
             continue
