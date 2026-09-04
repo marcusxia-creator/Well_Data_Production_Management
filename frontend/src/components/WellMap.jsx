@@ -232,7 +232,7 @@ function WellPopup({ well }) {
       <span><strong>Operator:</strong> {well.operator || "-"}</span>
       <span><strong>Type:</strong> {well.well_type || "-"}</span>
       <span><strong>Total Depth:</strong> {formatDepth(well.measured_depth_m)}</span>
-      <span><strong>Formation:</strong> {formatFormations(well)}</span>
+      <span><strong>Field/Formation:</strong> {formatFormations(well)}</span>
     </div>
   );
 }
