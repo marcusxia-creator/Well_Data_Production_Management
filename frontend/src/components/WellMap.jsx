@@ -257,7 +257,7 @@ function GoogleWellDot({ well, bubbleMetrics, showProductionBubbles }) {
           <small><strong>Operator:</strong> {well.operator || "-"}</small>
           <small><strong>Type:</strong> {well.well_type || "-"}</small>
           <small><strong>Total Depth:</strong> {formatDepth(well.measured_depth_m)}</small>
-          <small><strong>Formation:</strong> {formatFormations(well)}</small>
+          <small><strong>Field/Formation:</strong> {formatFormations(well)}</small>
         </span>
       </div>
     </OverlayView>

@@ -11,7 +11,7 @@ This project is a clean copy of the wellbore platform. It uses its own Docker Co
 | React dashboard | http://localhost:5174 |
 | Django API | http://localhost:8001/api/wells/ |
 | Django admin | http://localhost:8001/admin/ |
-| PostgreSQL/PostGIS | localhost:5433 |
+| PostgreSQL/PostGIS | localhost:5432 |
 
 Database defaults:
 
