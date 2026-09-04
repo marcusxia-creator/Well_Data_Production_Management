@@ -1,6 +1,7 @@
 from django.conf import settings
+from django.contrib.postgres.aggregates import StringAgg
 from django.db import connection
-from django.db.models import FloatField, OuterRef, Q, Subquery, Value
+from django.db.models import FloatField, OuterRef, Q, Subquery, TextField, Value
 from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets
@@ -65,6 +66,12 @@ class WellViewSet(viewsets.ReadOnlyModelViewSet):
             "-suffix", "-raw_id"
         )
         production_monthly = ProductionMonthly.objects.filter(base_uwi=OuterRef("base_uwi")).order_by("-production_month")
+        formations = (
+            WellProductionFormation.objects.filter(base_uwi=OuterRef("base_uwi"))
+            .values("base_uwi")
+            .annotate(names=StringAgg("formation", delimiter="; ", distinct=True, ordering="formation"))
+            .values("names")
+        )
         if production_monthly_table_exists():
             cumulative_oil_annotation = Subquery(production_monthly.values("cumulative_oil")[:1])
             cumulative_gas_annotation = Subquery(production_monthly.values("cumulative_gas")[:1])
@@ -87,6 +94,7 @@ class WellViewSet(viewsets.ReadOnlyModelViewSet):
             cumulative_oil_volume_value=cumulative_oil_annotation,
             cumulative_gas_volume_value=cumulative_gas_annotation,
             cumulative_fluid_volume_value=cumulative_fluid_annotation,
+            production_formations_value=Subquery(formations, output_field=TextField()),
         )
         status_value = self.request.query_params.getlist("status")
         actual_status = self.request.query_params.getlist("actual_status")

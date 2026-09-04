@@ -64,6 +64,7 @@ class WellSerializer(serializers.ModelSerializer):
     completions = serializers.SerializerMethodField()
     formation_tops = serializers.SerializerMethodField()
     production_samples = WellProductionSummarySerializer(source="production_summaries", many=True, read_only=True)
+    production_formations = serializers.SerializerMethodField()
     cumulative_oil_volume = serializers.SerializerMethodField()
     cumulative_gas_volume = serializers.SerializerMethodField()
     cumulative_fluid_volume = serializers.SerializerMethodField()
@@ -93,6 +94,7 @@ class WellSerializer(serializers.ModelSerializer):
             "completions",
             "formation_tops",
             "production_samples",
+            "production_formations",
             "cumulative_oil_volume",
             "cumulative_gas_volume",
             "cumulative_fluid_volume",
@@ -176,6 +178,10 @@ class WellSerializer(serializers.ModelSerializer):
 
     def get_formation_tops(self, obj):
         return []
+
+    def get_production_formations(self, obj):
+        value = getattr(obj, "production_formations_value", None) or ""
+        return [name.strip() for name in value.split(";") if name.strip()]
 
     def get_created_at(self, obj):
         return obj.import_timestamp

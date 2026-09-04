@@ -54,38 +54,9 @@ function formatDepth(value) {
   return Number.isFinite(depth) ? depth.toLocaleString() + " ft" : "-";
 }
 
-function formatVolume(value, maximumFractionDigits = 0) {
-  const volume = Number(value);
-  if (!Number.isFinite(volume)) return null;
-
-  return volume.toLocaleString(undefined, {
-    maximumFractionDigits,
-  });
-}
-
-function formatProduction(well) {
-  const cumulativeOil = formatVolume(well.cumulative_oil_volume);
-  const cumulativeGas = formatVolume(well.cumulative_gas_volume);
-  const cumulativeFluid = formatVolume(well.cumulative_fluid_volume);
-  const cumulativeValues = [];
-
-  if (cumulativeOil != null) cumulativeValues.push("Cumulative oil " + cumulativeOil + " bbls");
-  if (cumulativeGas != null) cumulativeValues.push("Cumulative gas " + cumulativeGas + " mcf");
-  if (cumulativeFluid != null) cumulativeValues.push("Cumulative fluid " + cumulativeFluid + " bbls");
-
-  if (cumulativeValues.length > 0) {
-    return cumulativeValues.join(" | ");
-  }
-
-  const sample = (well.production_samples || []).find((item) => (
-    item.oil_m3 != null || item.gas_e3m3 != null || item.water_m3 != null
-  ));
-  if (!sample) return "No production data";
-  const values = [];
-  if (sample.oil_m3 != null) values.push("Oil " + Number(sample.oil_m3).toLocaleString() + " bbls");
-  if (sample.gas_e3m3 != null) values.push("Gas " + Number(sample.gas_e3m3).toLocaleString() + " e3m3");
-  if (sample.water_m3 != null) values.push("Water " + Number(sample.water_m3).toLocaleString() + " bbls");
-  return values.join(" | ");
+function formatFormations(well) {
+  const formations = well.production_formations || [];
+  return formations.length > 0 ? formations.join(" | ") : "No formation data";
 }
 
 function wellStatusText(well) {
@@ -261,7 +232,7 @@ function WellPopup({ well }) {
       <span><strong>Operator:</strong> {well.operator || "-"}</span>
       <span><strong>Type:</strong> {well.well_type || "-"}</span>
       <span><strong>Total Depth:</strong> {formatDepth(well.measured_depth_m)}</span>
-      <span><strong>Production:</strong> {formatProduction(well)}</span>
+      <span><strong>Formation:</strong> {formatFormations(well)}</span>
     </div>
   );
 }
@@ -286,7 +257,7 @@ function GoogleWellDot({ well, bubbleMetrics, showProductionBubbles }) {
           <small><strong>Operator:</strong> {well.operator || "-"}</small>
           <small><strong>Type:</strong> {well.well_type || "-"}</small>
           <small><strong>Total Depth:</strong> {formatDepth(well.measured_depth_m)}</small>
-          <small><strong>Production:</strong> {formatProduction(well)}</small>
+          <small><strong>Formation:</strong> {formatFormations(well)}</small>
         </span>
       </div>
     </OverlayView>
