@@ -259,6 +259,7 @@ def execute_split(request, batch_id):
         summary = split_batch(batch, replace_existing=request.data.get("replace_existing", True) is not False)
         call_command("refresh_well_current_operators")
         call_command("refresh_well_status_categories")
+        call_command("refresh_well_production_formations")
     except Exception as exc:
         batch.status = RawImportBatch.STATUS_FAILED
         batch.error_message = str(exc)

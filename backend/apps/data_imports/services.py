@@ -643,7 +643,11 @@ def ensure_production_tables(cursor):
     ADD COLUMN IF NOT EXISTS tbg_psi double precision NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS csg_psi double precision NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS GOR double precision NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS GLR double precision NOT NULL DEFAULT 0
+    ADD COLUMN IF NOT EXISTS GLR double precision NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS oilCut double precision NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS chokeSize double precision NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS pumpDEPTH double precision NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS pumpDia double precision NOT NULL DEFAULT 0
     """
     )
     cursor.execute(
@@ -691,6 +695,10 @@ def serialize_production_row(row):
         "csg_psi": float(row["csg_psi"]),
         "GOR": float(row["GOR"]),
         "GLR": float(row["GLR"]),
+        "oilCut": float(row["oilCut"]),
+        "chokeSize": float(row["chokeSize"]),
+        "pumpDEPTH": float(row["pumpDEPTH"]),
+        "pumpDia": float(row["pumpDia"]),
     }
 
 
@@ -733,7 +741,7 @@ def build_production_rows(headers, source_rows, source_mapping=None, require_all
 
         optional = {}
         optional_valid = True
-        for target in ("tbg_psi", "csg_psi"):
+        for target in ("tbg_psi", "csg_psi", "chokeSize", "pumpDEPTH", "pumpDia"):
             value, valid = parse_production_decimal(
                 production_source_value(values, column_map, target), required=False
             )
@@ -743,6 +751,7 @@ def build_production_rows(headers, source_rows, source_mapping=None, require_all
         ratio_defaults = {
             "GOR": daily_gas / daily_oil if daily_oil else Decimal("0"),
             "GLR": daily_gas / fluid if fluid else Decimal("0"),
+            "oilCut": daily_oil / fluid if fluid else Decimal("0"),
         }
         for target, calculated_value in ratio_defaults.items():
             source_value = production_source_value(values, column_map, target)
@@ -791,12 +800,12 @@ def classify_production_rows(cursor, parsed_rows, mapped_fields):
     if wells and dates:
         cursor.execute(
             """SELECT base_uwi, production_date, daily_oil, daily_water, daily_gas, fluid,
-                      tbg_psi, csg_psi, GOR, GLR
+                      tbg_psi, csg_psi, GOR, GLR, oilCut, chokeSize, pumpDEPTH, pumpDia
                FROM production_daily WHERE base_uwi = ANY(%s) AND production_date = ANY(%s)""",
             [wells, dates],
         )
         columns = ("base_uwi", "production_date", "daily_oil", "daily_water", "daily_gas", "fluid",
-                   "tbg_psi", "csg_psi", "GOR", "GLR")
+                   "tbg_psi", "csg_psi", "GOR", "GLR", "oilCut", "chokeSize", "pumpDEPTH", "pumpDia")
         existing = {(record[0], record[1]): dict(zip(columns, record)) for record in cursor.fetchall()}
     new_rows, duplicate_rows, conflicts = [], [], []
     compared_fields = [field for field in mapped_fields if field not in {"base_uwi", "production_date"}]
@@ -853,22 +862,27 @@ def import_production_file(uploaded_file, requested_sheet="", replace_conflicts=
                     "daily_gas": Decimal(str(row["daily_gas"])), "fluid": Decimal(str(row["fluid"])),
                     "tbg_psi": Decimal(str(row["tbg_psi"])), "csg_psi": Decimal(str(row["csg_psi"])),
                     "GOR": Decimal(str(row["GOR"])), "GLR": Decimal(str(row["GLR"])),
+                    "oilCut": Decimal(str(row["oilCut"])), "chokeSize": Decimal(str(row["chokeSize"])),
+                    "pumpDEPTH": Decimal(str(row["pumpDEPTH"])), "pumpDia": Decimal(str(row["pumpDia"])),
                 })
         approved_rows = new_rows + replacement_rows
         imported_base_uwis = sorted({row["base_uwi"] for row in approved_rows})
         insert_daily = """
             INSERT INTO production_daily
-                (base_uwi, production_date, daily_oil, daily_water, daily_gas, fluid, tbg_psi, csg_psi, GOR, GLR, source_file, imported_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (base_uwi, production_date, daily_oil, daily_water, daily_gas, fluid, tbg_psi, csg_psi, GOR, GLR,
+                 oilCut, chokeSize, pumpDEPTH, pumpDia, source_file, imported_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (base_uwi, production_date) DO UPDATE SET
                 daily_oil=EXCLUDED.daily_oil, daily_water=EXCLUDED.daily_water,
                 daily_gas=EXCLUDED.daily_gas, fluid=EXCLUDED.fluid,
                 tbg_psi=EXCLUDED.tbg_psi, csg_psi=EXCLUDED.csg_psi, GOR=EXCLUDED.GOR, GLR=EXCLUDED.GLR,
+                oilCut=EXCLUDED.oilCut, chokeSize=EXCLUDED.chokeSize, pumpDEPTH=EXCLUDED.pumpDEPTH, pumpDia=EXCLUDED.pumpDia,
                 source_file=EXCLUDED.source_file, imported_at=EXCLUDED.imported_at
         """
         cursor.executemany(insert_daily, [[
             row["base_uwi"], row["production_date"], row["daily_oil"], row["daily_water"],
             row["daily_gas"], row["fluid"], row["tbg_psi"], row["csg_psi"], row["GOR"], row["GLR"],
+            row["oilCut"], row["chokeSize"], row["pumpDEPTH"], row["pumpDia"],
             uploaded_file.name, imported_at
         ] for row in approved_rows])
         monthly_row_count = 0
